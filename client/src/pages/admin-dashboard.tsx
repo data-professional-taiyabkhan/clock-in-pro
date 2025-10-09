@@ -108,7 +108,7 @@ export default function AdminDashboard() {
     mutationFn: async ({ employeeId, imageData }: { employeeId: number; imageData: string }) => {
       return await apiRequest(`/api/employees/${employeeId}/face-image`, {
         method: "POST",
-        body: JSON.stringify({ imageData }),
+        body: { imageData },
       });
     },
     onSuccess: () => {
