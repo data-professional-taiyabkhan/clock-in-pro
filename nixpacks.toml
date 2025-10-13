@@ -3,16 +3,12 @@ nixPkgs = [
   "nodejs_20", 
   "python311", 
   "python311Packages.pip", 
-  "python311Packages.virtualenv",
-  "gcc",
-  "gnumake",
-  "python311Packages.setuptools",
-  "coreutils"
+  "python311Packages.virtualenv"
 ]
 
 [phases.install]
 cmds = [
-  "npm ci --build-from-source",
+  "npm ci",
   "python -m venv /opt/venv",
   ". /opt/venv/bin/activate && pip install -r python-requirements.txt"
 ]
