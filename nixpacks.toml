@@ -11,6 +11,7 @@ nixPkgs = [
 
 [phases.install]
 cmds = [
+  "ln -sf /bin/bash /bin/sh",
   "npm ci",
   "python -m venv /opt/venv",
   "/opt/venv/bin/pip install -r python-requirements.txt"
