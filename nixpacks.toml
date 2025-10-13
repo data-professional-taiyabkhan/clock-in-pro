@@ -6,15 +6,15 @@ nixPkgs = [
   "python311Packages.virtualenv",
   "gcc",
   "gnumake",
-  "python311Packages.setuptools"
+  "python311Packages.setuptools",
+  "coreutils"
 ]
 
 [phases.install]
 cmds = [
-  "ln -sf /bin/bash /bin/sh",
-  "npm ci",
+  "npm ci --build-from-source",
   "python -m venv /opt/venv",
-  "/opt/venv/bin/pip install -r python-requirements.txt"
+  ". /opt/venv/bin/activate && pip install -r python-requirements.txt"
 ]
 
 [phases.build]
@@ -25,3 +25,4 @@ cmd = "npm start"
 
 [variables]
 PATH = "/opt/venv/bin:$PATH"
+PYTHON_KEYRING_BACKEND = "keyring.backends.null.Keyring"
