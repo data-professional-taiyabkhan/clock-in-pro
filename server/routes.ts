@@ -11,6 +11,12 @@ import { format, differenceInMinutes, differenceInSeconds, startOfWeek, endOfWee
 
 const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
 
+// Helper function to get the correct Python command based on OS
+function getPythonCommand(): string {
+  // On Windows, use 'python', on Unix/Linux/Mac use 'python3'
+  return process.platform === 'win32' ? 'python' : 'python3';
+}
+
 // Calculate Euclidean distance between two face embedding vectors
 function calculateEuclideanDistance(embedding1: number[], embedding2: number[]): number {
   if (embedding1.length !== embedding2.length) {
@@ -78,7 +84,7 @@ async function compareFaceDescriptors(storedEncoding: number[], capturedImageDat
     const { spawn } = await import('child_process');
     
     return new Promise((resolve) => {
-      const python = spawn('python3', ['server/face_recognition_service.py', 'compare']);
+      const python = spawn(getPythonCommand(), ['server/face_recognition_service.py', 'compare']);
       
       let stdout = '';
       let stderr = '';
@@ -609,7 +615,7 @@ async function compareFacesWithPython(
     
     return new Promise((resolve, reject) => {
       // Use simple face_recognition library exactly as requested
-      const pythonProcess = spawn('python3', ['server/simple_face_recognition.py', 'compare'], {
+      const pythonProcess = spawn(getPythonCommand(), ['server/simple_face_recognition.py', 'compare'], {
         stdio: ['pipe', 'pipe', 'pipe']
       });
       
@@ -681,7 +687,7 @@ async function generateProbeEmbedding(imageData: string): Promise<number[]> {
     
     return new Promise((resolve, reject) => {
       // Use simple face_recognition library to generate encoding
-      const pythonProcess = spawn('python3', ['server/simple_face_recognition.py', 'encode'], {
+      const pythonProcess = spawn(getPythonCommand(), ['server/simple_face_recognition.py', 'encode'], {
         stdio: ['pipe', 'pipe', 'pipe']
       });
       
@@ -896,7 +902,7 @@ export function registerRoutes(app: Express): Server {
         // With DeepFace, we store the image directly and compare images during verification
         const { spawn } = await import('child_process');
         const result = await new Promise<{ success: boolean; image_data?: string; error?: string }>((resolve, reject) => {
-          const pythonProcess = spawn('python3', ['server/actual_deepface.py', 'store'], {
+          const pythonProcess = spawn(getPythonCommand(), ['server/actual_deepface.py', 'store'], {
             stdio: ['pipe', 'pipe', 'pipe']
           });
           
@@ -1129,7 +1135,7 @@ export function registerRoutes(app: Express): Server {
       
       return new Promise((resolve, reject) => {
         // Use Python face recognition service for direct comparison
-        const pythonProcess = spawn('python3', ['server/face_recognition_service.py', 'compare'], {
+        const pythonProcess = spawn(getPythonCommand(), ['server/face_recognition_service.py', 'compare'], {
           stdio: ['pipe', 'pipe', 'pipe']
         });
         
@@ -1275,7 +1281,7 @@ export function registerRoutes(app: Express): Server {
         // Face comparison using DeepFace
         const { spawn } = await import('child_process');
         const verificationResult = await new Promise<{ success: boolean; result?: { verified: boolean; distance: number; threshold: number; model: string }; error?: string }>((resolve, reject) => {
-          const pythonProcess = spawn('python3', ['server/actual_deepface.py', 'verify'], {
+          const pythonProcess = spawn(getPythonCommand(), ['server/actual_deepface.py', 'verify'], {
             stdio: ['pipe', 'pipe', 'pipe']
           });
           

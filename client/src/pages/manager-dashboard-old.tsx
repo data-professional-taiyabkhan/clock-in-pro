@@ -560,7 +560,7 @@ export default function ManagerDashboard() {
                                     try {
                                       await apiRequest(`/api/employees/${employee.id}/face-image`, {
                                         method: "POST",
-                                        body: JSON.stringify({ imageData }),
+                                        body: { imageData },
                                       });
                                       toast({
                                         title: "Success",
