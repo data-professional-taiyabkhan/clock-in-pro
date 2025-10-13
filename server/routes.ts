@@ -13,12 +13,24 @@ const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
 
 // Helper function to get the correct Python command based on OS
 function getPythonCommand(): string {
-  // In production (Railway), use venv Python where all dependencies are installed
-  if (process.env.NODE_ENV === 'production' && process.env.RAILWAY_ENVIRONMENT) {
-    return '/opt/venv/bin/python3';
+  // In production, check if venv Python exists and use it
+  if (process.env.NODE_ENV === 'production') {
+    // Try to use venv Python (Railway/production deployment)
+    const fs = require('fs');
+    const venvPython = '/opt/venv/bin/python3';
+    try {
+      if (fs.existsSync(venvPython)) {
+        console.log('Using venv Python:', venvPython);
+        return venvPython;
+      }
+    } catch (err) {
+      console.log('Venv Python not found, falling back to system Python');
+    }
   }
   // Local development: On Windows, use 'python', on Unix/Linux/Mac use 'python3'
-  return process.platform === 'win32' ? 'python' : 'python3';
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+  console.log('Using system Python:', pythonCmd);
+  return pythonCmd;
 }
 
 // Calculate Euclidean distance between two face embedding vectors
@@ -1344,9 +1356,13 @@ export function registerRoutes(app: Express): Server {
         
         // Face comparison using DeepFace
         const { spawn } = await import('child_process');
+        const pythonCmd = getPythonCommand();
+        console.log(`Spawning Python process: ${pythonCmd} server/actual_deepface.py verify`);
+        
         const verificationResult = await new Promise<{ success: boolean; result?: { verified: boolean; distance: number; threshold: number; model: string }; error?: string }>((resolve, reject) => {
-          const pythonProcess = spawn(getPythonCommand(), ['server/actual_deepface.py', 'verify'], {
-            stdio: ['pipe', 'pipe', 'pipe']
+          const pythonProcess = spawn(pythonCmd, ['server/actual_deepface.py', 'verify'], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env, PATH: `/opt/venv/bin:${process.env.PATH}` }
           });
           
           let output = '';
@@ -1365,11 +1381,15 @@ export function registerRoutes(app: Express): Server {
           });
           
           pythonProcess.stdout.on('data', (data) => {
-            output += data.toString();
+            const dataStr = data.toString();
+            console.log('Python stdout:', dataStr);
+            output += dataStr;
           });
           
           pythonProcess.stderr.on('data', (data) => {
-            errorOutput += data.toString();
+            const dataStr = data.toString();
+            console.error('Python stderr:', dataStr);
+            errorOutput += dataStr;
           });
           
           pythonProcess.on('close', (code) => {
