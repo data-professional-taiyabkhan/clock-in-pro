@@ -1,10 +1,11 @@
 [phases.setup]
-nixPkgs = ["nodejs_20", "python311", "python311Packages.pip"]
+nixPkgs = ["nodejs_20", "python311", "python311Packages.pip", "python311Packages.virtualenv"]
 
 [phases.install]
 cmds = [
   "npm ci",
-  "pip install --user -r python-requirements.txt"
+  "python -m venv /opt/venv",
+  "/opt/venv/bin/pip install -r python-requirements.txt"
 ]
 
 [phases.build]
@@ -12,3 +13,6 @@ cmds = ["npm run build"]
 
 [start]
 cmd = "npm start"
+
+[variables]
+PATH = "/opt/venv/bin:$PATH"
