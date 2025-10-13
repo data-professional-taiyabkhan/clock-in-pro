@@ -3,7 +3,9 @@ nixPkgs = [
   "nodejs_20", 
   "python311", 
   "python311Packages.pip", 
-  "python311Packages.virtualenv"
+  "python311Packages.virtualenv",
+  "bash",
+  "coreutils"
 ]
 
 [phases.install]
