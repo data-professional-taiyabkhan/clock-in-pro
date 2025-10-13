@@ -13,7 +13,11 @@ const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
 
 // Helper function to get the correct Python command based on OS
 function getPythonCommand(): string {
-  // On Windows, use 'python', on Unix/Linux/Mac use 'python3'
+  // In production (Railway), use venv Python where all dependencies are installed
+  if (process.env.NODE_ENV === 'production' && process.env.RAILWAY_ENVIRONMENT) {
+    return '/opt/venv/bin/python3';
+  }
+  // Local development: On Windows, use 'python', on Unix/Linux/Mac use 'python3'
   return process.platform === 'win32' ? 'python' : 'python3';
 }
 
@@ -88,6 +92,22 @@ async function compareFaceDescriptors(storedEncoding: number[], capturedImageDat
       
       let stdout = '';
       let stderr = '';
+      
+      // Handle process startup errors
+      python.on('error', (error) => {
+        console.error('Failed to start Python process:', error);
+        resolve({
+          isMatch: false,
+          similarity: 0,
+          confidence: 0,
+          details: { error: `Failed to start face recognition: ${error.message}` }
+        });
+      });
+      
+      // Handle stdin errors to prevent crashes
+      python.stdin.on('error', (error) => {
+        console.error('Python stdin error:', error);
+      });
       
       python.stdout.on('data', (data) => {
         stdout += data.toString();
@@ -622,6 +642,17 @@ async function compareFacesWithPython(
       let output = '';
       let errorOutput = '';
       
+      // Handle process startup errors
+      pythonProcess.on('error', (error) => {
+        console.error('Failed to start Python process:', error);
+        reject(new Error(`Failed to start face comparison: ${error.message}`));
+      });
+      
+      // Handle stdin errors to prevent crashes
+      pythonProcess.stdin.on('error', (error) => {
+        console.error('Python stdin error:', error);
+      });
+      
       pythonProcess.stdout.on('data', (data) => {
         output += data.toString();
       });
@@ -693,6 +724,17 @@ async function generateProbeEmbedding(imageData: string): Promise<number[]> {
       
       let output = '';
       let errorOutput = '';
+      
+      // Handle process startup errors
+      pythonProcess.on('error', (error) => {
+        console.error('Failed to start Python process:', error);
+        reject(new Error(`Failed to start face encoding: ${error.message}`));
+      });
+      
+      // Handle stdin errors to prevent crashes
+      pythonProcess.stdin.on('error', (error) => {
+        console.error('Python stdin error:', error);
+      });
       
       pythonProcess.stdout.on('data', (data) => {
         output += data.toString();
@@ -908,6 +950,17 @@ export function registerRoutes(app: Express): Server {
           
           let output = '';
           let errorOutput = '';
+          
+          // Handle process startup errors
+          pythonProcess.on('error', (error) => {
+            console.error('Failed to start Python process:', error);
+            reject(new Error(`Failed to start face storage: ${error.message}`));
+          });
+          
+          // Handle stdin errors to prevent crashes
+          pythonProcess.stdin.on('error', (error) => {
+            console.error('Python stdin error:', error);
+          });
           
           pythonProcess.stdout.on('data', (data) => {
             output += data.toString();
@@ -1142,6 +1195,17 @@ export function registerRoutes(app: Express): Server {
         let output = '';
         let errorOutput = '';
         
+        // Handle process startup errors
+        pythonProcess.on('error', (error) => {
+          console.error('Failed to start Python process:', error);
+          reject(new Error(`Failed to start face recognition: ${error.message}`));
+        });
+        
+        // Handle stdin errors to prevent crashes
+        pythonProcess.stdin.on('error', (error) => {
+          console.error('Python stdin error:', error);
+        });
+        
         pythonProcess.stdout.on('data', (data) => {
           output += data.toString();
         });
@@ -1287,6 +1351,18 @@ export function registerRoutes(app: Express): Server {
           
           let output = '';
           let errorOutput = '';
+          
+          // Handle process startup errors
+          pythonProcess.on('error', (error) => {
+            console.error('Failed to start Python process:', error);
+            reject(new Error(`Failed to start face verification: ${error.message}`));
+          });
+          
+          // Handle stdin errors (EPIPE, etc.) to prevent crashes
+          pythonProcess.stdin.on('error', (error) => {
+            console.error('Python stdin error:', error);
+            // Don't crash, the close handler will handle it
+          });
           
           pythonProcess.stdout.on('data', (data) => {
             output += data.toString();
