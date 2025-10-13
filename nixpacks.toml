@@ -8,7 +8,7 @@ nixPkgs = [
 
 [phases.install]
 cmds = [
-  "npm install --legacy-peer-deps --ignore-scripts",
+  "npm install --legacy-peer-deps",
   "python -m venv /opt/venv",
   ". /opt/venv/bin/activate && pip install -r python-requirements.txt"
 ]
