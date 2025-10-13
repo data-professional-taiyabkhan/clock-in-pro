@@ -8,6 +8,7 @@ import { desc, eq, and } from "drizzle-orm";
 import { db } from "./db";
 import crypto from "crypto";
 import { format, differenceInMinutes, differenceInSeconds, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subMonths } from "date-fns";
+import { existsSync } from "fs";
 
 const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
 
@@ -16,10 +17,9 @@ function getPythonCommand(): string {
   // In production, check if venv Python exists and use it
   if (process.env.NODE_ENV === 'production') {
     // Try to use venv Python (Railway/production deployment)
-    const fs = require('fs');
     const venvPython = '/opt/venv/bin/python3';
     try {
-      if (fs.existsSync(venvPython)) {
+      if (existsSync(venvPython)) {
         console.log('Using venv Python:', venvPython);
         return venvPython;
       }
