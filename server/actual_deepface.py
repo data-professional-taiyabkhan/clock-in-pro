@@ -12,15 +12,48 @@ import os
 import tempfile
 from PIL import Image
 
-# Install DeepFace if not available
+# Attempt to load DeepFace. If it's unavailable (for example when the
+# dependency failed to install on the deployment image) we'll transparently
+# fall back to the simple OpenCV-based comparer so that face verification can
+# still succeed.  We keep the original import error around so that callers can
+# surface a useful warning message.
+DEEPFACE_AVAILABLE = False
+DEEPFACE_IMPORT_ERROR: Exception | None = None
+
 try:
-    from deepface import DeepFace
-except ImportError:
-    print(json.dumps({
-        "success": False,
-        "error": "DeepFace not installed. Install with: pip install deepface"
-    }))
-    sys.exit(1)
+    from deepface import DeepFace  # type: ignore
+    DEEPFACE_AVAILABLE = True
+except Exception as exc:  # ImportError or any dependency loading error
+    DEEPFACE_IMPORT_ERROR = exc
+    print(f"DeepFace import error: {exc}", file=sys.stderr)
+
+encode_face = None  # type: ignore
+compare_faces_simple = None  # type: ignore
+FALLBACK_READY = False
+
+
+def ensure_fallback_loaded() -> bool:
+    """Load the lightweight OpenCV-based fallback comparer on demand."""
+    global encode_face, compare_faces_simple, FALLBACK_READY, DEEPFACE_IMPORT_ERROR
+
+    if FALLBACK_READY and encode_face is not None and compare_faces_simple is not None:
+        return True
+
+    try:
+        from simple_face_recognition import encode_face as _encode_face, compare_faces_simple as _compare_faces_simple  # type: ignore
+
+        encode_face = _encode_face
+        compare_faces_simple = _compare_faces_simple
+        FALLBACK_READY = True
+        return True
+    except Exception as exc:  # pragma: no cover - fallback import failure
+        DEEPFACE_IMPORT_ERROR = exc if DEEPFACE_IMPORT_ERROR is None else DEEPFACE_IMPORT_ERROR
+        print(f"Fallback face recogniser import error: {exc}", file=sys.stderr)
+        return False
+
+
+if not DEEPFACE_AVAILABLE:
+    ensure_fallback_loaded()
 
 def process_image_from_base64(image_data):
     """Convert base64 image to temporary file for DeepFace."""
@@ -82,6 +115,28 @@ def verify_faces_with_actual_deepface(registered_image_data, captured_image_data
             except:
                 pass
 
+
+def verify_faces_with_simple_fallback(registered_image_data, captured_image_data):
+    """Fallback verification when DeepFace is unavailable."""
+    if not ensure_fallback_loaded() or encode_face is None or compare_faces_simple is None:
+        raise RuntimeError(
+            "DeepFace is unavailable and the OpenCV fallback could not be loaded."
+        )
+
+    known_encoding = encode_face(registered_image_data)
+    comparison = compare_faces_simple(known_encoding, captured_image_data, tolerance=0.55)
+
+    return {
+        "verified": bool(comparison.get("is_match")),
+        "distance": float(comparison.get("distance", 0.0)),
+        "threshold": float(comparison.get("tolerance", 0.55)),
+        "model": "opencv-simple",
+        "details": {
+            "engine": "opencv_fallback",
+            "note": "DeepFace import failed; using OpenCV-based comparison",
+        },
+    }
+
 def main():
     """Main function to handle operations."""
     try:
@@ -103,16 +158,56 @@ def main():
             elif operation == "verify":
                 input_data = sys.stdin.read()
                 data = json.loads(input_data)
-                
+
                 registered_image = data.get('registered_image', '')
                 captured_image = data.get('captured_image', '')
-                
-                result = verify_faces_with_actual_deepface(registered_image, captured_image)
-                
-                print(json.dumps({
-                    "success": True,
-                    "result": result
-                }))
+
+                warning_message = None
+
+                if DEEPFACE_AVAILABLE:
+                    try:
+                        result = verify_faces_with_actual_deepface(registered_image, captured_image)
+                        print(json.dumps({
+                            "success": True,
+                            "engine": "deepface",
+                            "result": result
+                        }))
+                        return
+                    except Exception as deepface_error:
+                        print(f"DeepFace verification error: {deepface_error}", file=sys.stderr)
+                        # Attempt to fall back to the OpenCV pipeline
+                        warning_message = f"DeepFace verification failed: {deepface_error}"
+                        if DEEPFACE_IMPORT_ERROR is not None:
+                            warning_message += f" (import issue: {DEEPFACE_IMPORT_ERROR})"
+
+                try:
+                    result = verify_faces_with_simple_fallback(registered_image, captured_image)
+                    warning = warning_message
+                    if DEEPFACE_AVAILABLE and warning is None and DEEPFACE_IMPORT_ERROR is not None:
+                        warning = f"DeepFace unavailable: {DEEPFACE_IMPORT_ERROR}"
+                    elif not DEEPFACE_AVAILABLE and warning is None and DEEPFACE_IMPORT_ERROR is not None:
+                        warning = f"DeepFace unavailable: {DEEPFACE_IMPORT_ERROR}"
+
+                    response = {
+                        "success": True,
+                        "engine": "opencv_fallback",
+                        "result": result,
+                    }
+                    if warning:
+                        response["warning"] = warning
+
+                    print(json.dumps(response))
+                except Exception as fallback_error:
+                    error_message = "DeepFace import failed and fallback comparison is unavailable."
+                    if DEEPFACE_IMPORT_ERROR is not None:
+                        error_message += f" DeepFace error: {DEEPFACE_IMPORT_ERROR}."
+                    if warning_message is not None:
+                        error_message += f" Verification error: {warning_message}."
+                    error_message += f" Fallback error: {fallback_error}."
+                    print(json.dumps({
+                        "success": False,
+                        "error": error_message
+                    }))
                 
             else:
                 print(json.dumps({

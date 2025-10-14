@@ -1,10 +1,18 @@
 [phases.setup]
 nixPkgs = [
-  "nodejs_20", 
-  "python311", 
+  "nodejs_20",
+  "python311",
   "python311Packages.pip",
   "bash",
   "coreutils"
+]
+aptPkgs = [
+  "libstdc++6",
+  "libgl1",
+  "libglib2.0-0",
+  "libsm6",
+  "libxext6",
+  "libxrender1"
 ]
 
 [phases.install]
@@ -20,7 +28,6 @@ cmds = [
   "/app/.venv/bin/python3 -c 'import deepface; print(\"DeepFace successfully installed and imported\")'",
   "npm run build"
 ]
-
 
 [start]
 cmd = "npm start"
