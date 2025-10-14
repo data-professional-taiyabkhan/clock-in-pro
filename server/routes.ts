@@ -1349,8 +1349,7 @@ export function registerRoutes(app: Express): Server {
         
         const verificationResult = await new Promise<{ success: boolean; result?: { verified: boolean; distance: number; threshold: number; model: string }; error?: string }>((resolve, reject) => {
           const pythonProcess = spawn(pythonCmd, ['server/actual_deepface.py', 'verify'], {
-            stdio: ['pipe', 'pipe', 'pipe'],
-            env: { ...process.env, PATH: `/opt/venv/bin:${process.env.PATH}` }
+            stdio: ['pipe', 'pipe', 'pipe']
           });
           
           let output = '';
