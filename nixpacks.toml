@@ -15,8 +15,9 @@ cmds = [
 [phases.build]
 cmds = [
   "python3 -m venv --copies /app/.venv",
-  "/app/.venv/bin/pip install --upgrade pip",
-  "/app/.venv/bin/pip install -r python-requirements.txt",
+  "/app/.venv/bin/pip install --no-cache-dir --upgrade pip",
+  "/app/.venv/bin/pip install --no-cache-dir -r python-requirements.txt",
+  "/app/.venv/bin/python3 -c 'import deepface; print(\"DeepFace successfully installed and imported\")'",
   "npm run build"
 ]
 
@@ -26,3 +27,5 @@ cmd = "npm start"
 
 [variables]
 PYTHON_KEYRING_BACKEND = "keyring.backends.null.Keyring"
+PYTHONUNBUFFERED = "1"
+PATH = "/app/.venv/bin:$PATH"
