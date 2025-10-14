@@ -16,7 +16,10 @@ export default function WelcomePage() {
   const [showFaceRegistration, setShowFaceRegistration] = useState(false);
 
   const clockInMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/clock-in"),
+    mutationFn: () =>
+      apiRequest("/api/clock-in", {
+        method: "POST",
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
       queryClient.invalidateQueries({ queryKey: ["/api/attendance"] });
@@ -24,7 +27,11 @@ export default function WelcomePage() {
   });
 
   const registerFaceMutation = useMutation({
-    mutationFn: (faceData: string) => apiRequest("POST", "/api/register-face", { faceData }),
+    mutationFn: (faceData: string) =>
+      apiRequest("/api/register-face", {
+        method: "POST",
+        body: { faceData },
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/user"] });
       setShowFaceRegistration(false);
