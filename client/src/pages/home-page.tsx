@@ -47,14 +47,10 @@ export default function HomePage() {
 
   const faceRegistrationMutation = useMutation({
     mutationFn: async (faceData: string) => {
-      const res = await apiRequest("POST", "/api/register-face", { faceData });
-      
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.message || "Face registration failed");
-      }
-      
-      return await res.json();
+      return await apiRequest("/api/register-face", {
+        method: "POST",
+        body: { faceData },
+      });
     },
     onSuccess: () => {
       toast({

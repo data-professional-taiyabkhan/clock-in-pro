@@ -14,7 +14,10 @@ export default function ThankYouPage() {
   const queryClient = useQueryClient();
 
   const clockOutMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/clock-out"),
+    mutationFn: () =>
+      apiRequest("/api/clock-out", {
+        method: "POST",
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
       queryClient.invalidateQueries({ queryKey: ["/api/attendance"] });
