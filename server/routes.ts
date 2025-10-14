@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { setupAuth, requireAuth, requireManager, requireAdmin, requireDeveloper, hashPassword, comparePasswords } from "./auth";
 import { storage } from "./storage";
 import { insertAttendanceRecordSchema, insertLocationSchema, loginSchema, registerSchema, insertOrganizationSchema, users, employeeInvitations, locations, employeeLocations } from "@shared/schema";
+import type { User } from "@shared/schema";
 import { z } from "zod";
 import { desc, eq, and } from "drizzle-orm";
 import { db } from "./db";
@@ -11,6 +12,18 @@ import { format, differenceInMinutes, differenceInSeconds, startOfWeek, endOfWee
 import { existsSync } from "fs";
 
 const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
+
+function toSafeUser(user: User) {
+  const { password: _password, ...rest } = user;
+  const hasEmbedding = Array.isArray(user.faceEmbedding)
+    ? user.faceEmbedding.length > 0
+    : Boolean(user.faceEmbedding);
+
+  return {
+    ...rest,
+    faceRegistered: Boolean(user.faceImageUrl) || hasEmbedding,
+  };
+}
 
 // Helper function to get the correct Python command based on OS
 function getPythonCommand(): string {
@@ -820,8 +833,7 @@ export function registerRoutes(app: Express): Server {
       console.log("Session set for user:", user.id);
 
       // Return user without password
-      const { password: _, ...safeUser } = user;
-      res.json(safeUser);
+      res.json(toSafeUser(user));
     } catch (error) {
       console.error("Login error:", error);
       res.status(400).json({ message: "Login failed" });
@@ -848,8 +860,7 @@ export function registerRoutes(app: Express): Server {
       });
 
       // Return user without password
-      const { password: _, ...safeUser } = user;
-      res.json(safeUser);
+      res.json(toSafeUser(user));
     } catch (error) {
       console.error("Registration error:", error);
       res.status(400).json({ message: "Registration failed" });
@@ -866,9 +877,97 @@ export function registerRoutes(app: Express): Server {
     if (!req.user) {
       return res.status(401).json({ message: "Not authenticated" });
     }
-    
-    const { password: _, ...safeUser } = req.user;
-    res.json(safeUser);
+
+    res.json(toSafeUser(req.user));
+  });
+
+  app.post("/api/register-face", requireAuth, async (req, res) => {
+    try {
+      const { faceData } = req.body as { faceData?: string };
+
+      if (!faceData || typeof faceData !== "string" || faceData.trim().length === 0) {
+        return res.status(400).json({ message: "Face data is required" });
+      }
+
+      let updatedUser: User | undefined;
+
+      if (faceData.startsWith("data:image/")) {
+        if (!faceData.includes(";base64,")) {
+          return res.status(400).json({ message: "Face image data must be base64 encoded" });
+        }
+
+        const [, base64Payload] = faceData.split(",");
+        if (!base64Payload || base64Payload.length < 1000) {
+          return res.status(400).json({ message: "Face image data is too small" });
+        }
+
+        updatedUser = await storage.updateUserFaceImage(req.user!.id, faceData);
+      } else {
+        let embedding: number[] | null = null;
+
+        try {
+          const parsed = JSON.parse(faceData);
+          if (Array.isArray(parsed)) {
+            const normalized = parsed
+              .map((value) => (typeof value === "number" ? value : Number.parseFloat(value)))
+              .filter((value) => Number.isFinite(value));
+
+            if (normalized.length === parsed.length && normalized.length > 0) {
+              embedding = normalized;
+            }
+          } else if (parsed && typeof parsed === "object") {
+            const numbers: number[] = [];
+            const collectNumbers = (value: unknown) => {
+              if (typeof value === "number" && Number.isFinite(value)) {
+                numbers.push(value);
+                return;
+              }
+
+              if (Array.isArray(value)) {
+                value.forEach(collectNumbers);
+                return;
+              }
+
+              if (value && typeof value === "object") {
+                Object.values(value as Record<string, unknown>).forEach(collectNumbers);
+              }
+            };
+
+            collectNumbers(parsed);
+
+            if (numbers.length > 0) {
+              embedding = numbers;
+            }
+          }
+        } catch (error) {
+          console.warn("Failed to parse face embedding data", error);
+        }
+
+        if (!embedding) {
+          return res.status(400).json({ message: "Invalid face data provided" });
+        }
+
+        updatedUser = await storage.updateUserFaceEmbedding(
+          req.user!.id,
+          req.user?.faceImageUrl ?? undefined,
+          embedding
+        );
+      }
+
+      if (!updatedUser) {
+        throw new Error("Failed to update face data");
+      }
+
+      req.user = updatedUser;
+
+      res.json({
+        message: "Face registered successfully",
+        user: toSafeUser(updatedUser),
+      });
+    } catch (error) {
+      console.error("Face registration error:", error);
+      res.status(500).json({ message: "Failed to register face" });
+    }
   });
 
   // Password change route for all authenticated users
@@ -1008,7 +1107,7 @@ export function registerRoutes(app: Express): Server {
           throw new Error('Failed to retrieve updated user');
         }
         
-        const { password: _, ...safeUser } = updatedUser;
+        const safeUser = toSafeUser(updatedUser);
         res.json({
           message: "Employee face image updated successfully for DeepFace verification",
           user: safeUser,
@@ -1354,7 +1453,13 @@ export function registerRoutes(app: Express): Server {
         const pythonCmd = getPythonCommand();
         console.log(`Spawning Python process: ${pythonCmd} server/actual_deepface.py verify`);
         
-        const verificationResult = await new Promise<{ success: boolean; result?: { verified: boolean; distance: number; threshold: number; model: string }; error?: string }>((resolve, reject) => {
+        const verificationResult = await new Promise<{
+          success: boolean;
+          engine?: string;
+          warning?: string;
+          result?: { verified: boolean; distance: number; threshold: number; model: string; details?: Record<string, unknown> };
+          error?: string;
+        }>((resolve, reject) => {
           const pythonProcess = spawn(pythonCmd, ['server/actual_deepface.py', 'verify'], {
             stdio: ['pipe', 'pipe', 'pipe']
           });
@@ -1428,12 +1533,18 @@ export function registerRoutes(app: Express): Server {
         });
         
         console.log(`=== DEEPFACE VERIFICATION RESULT ===`);
+        if (verificationResult.engine) {
+          console.log(`Verification engine: ${verificationResult.engine}`);
+        }
         console.log(`User being verified: ${req.user.email}`);
         console.log(`DeepFace success: ${verificationResult.success}`);
         console.log(`Distance calculated: ${verificationResult.result?.distance}`);
         console.log(`Threshold: ${verificationResult.result?.threshold}`);
         console.log(`Model: ${verificationResult.result?.model}`);
         console.log(`Match result: ${verificationResult.result?.verified ? 'PASS' : 'FAIL'}`);
+        if (verificationResult.warning) {
+          console.warn(`Verification warning: ${verificationResult.warning}`);
+        }
         console.log(`Error (if any): ${verificationResult.error}`);
         console.log(`=====================================`);
         
@@ -2087,12 +2198,7 @@ export function registerRoutes(app: Express): Server {
       const allUsers = await storage.getAllUsers(req.user!.organizationId);
       
       // Remove passwords from response
-      const safeUsers = allUsers.map(user => {
-        const { password: _, ...safeUser } = user;
-        return safeUser;
-      });
-      
-      res.json(safeUsers);
+      res.json(allUsers.map(toSafeUser));
     } catch (error) {
       console.error("Get employees error:", error);
       res.status(500).json({ message: "Failed to get employees" });
@@ -2141,12 +2247,9 @@ export function registerRoutes(app: Express): Server {
         faceEmbedding: null
       });
 
-      // Remove password from response
-      const { password: _, ...safeUser } = newUser;
-      
       res.json({
         message: "Employee created successfully",
-        user: safeUser,
+        user: toSafeUser(newUser),
         defaultPassword: defaultPassword,
         note: "Employee can change password after first login"
       });
@@ -2290,9 +2393,7 @@ export function registerRoutes(app: Express): Server {
       // Set session
       (req.session as any).userId = user.id;
 
-      // Return user without password
-      const { password: _, ...safeUser } = user;
-      res.json(safeUser);
+      res.json(toSafeUser(user));
     } catch (error) {
       console.error("Register with token error:", error);
       res.status(400).json({ message: "Registration failed" });
