@@ -41,6 +41,16 @@ function getPythonCommand(): string {
   return pythonCmd;
 }
 
+// Helper function to get Python environment with LD_LIBRARY_PATH
+function getPythonEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  // Add library paths for OpenCV/TensorFlow dependencies
+  if (process.env.NODE_ENV === 'production') {
+    env.LD_LIBRARY_PATH = '/usr/lib/x86_64-linux-gnu:/usr/lib:/lib/x86_64-linux-gnu:/lib';
+  }
+  return env;
+}
+
 // Calculate Euclidean distance between two face embedding vectors
 function calculateEuclideanDistance(embedding1: number[], embedding2: number[]): number {
   if (embedding1.length !== embedding2.length) {
@@ -108,7 +118,9 @@ async function compareFaceDescriptors(storedEncoding: number[], capturedImageDat
     const { spawn } = await import('child_process');
     
     return new Promise((resolve) => {
-      const python = spawn(getPythonCommand(), ['server/face_recognition_service.py', 'compare']);
+      const python = spawn(getPythonCommand(), ['server/face_recognition_service.py', 'compare'], {
+        env: getPythonEnv()
+      });
       
       let stdout = '';
       let stderr = '';
@@ -656,7 +668,8 @@ async function compareFacesWithPython(
     return new Promise((resolve, reject) => {
       // Use simple face_recognition library exactly as requested
       const pythonProcess = spawn(getPythonCommand(), ['server/simple_face_recognition.py', 'compare'], {
-        stdio: ['pipe', 'pipe', 'pipe']
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: getPythonEnv()
       });
       
       let output = '';
@@ -739,7 +752,8 @@ async function generateProbeEmbedding(imageData: string): Promise<number[]> {
     return new Promise((resolve, reject) => {
       // Use simple face_recognition library to generate encoding
       const pythonProcess = spawn(getPythonCommand(), ['server/simple_face_recognition.py', 'encode'], {
-        stdio: ['pipe', 'pipe', 'pipe']
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: getPythonEnv()
       });
       
       let output = '';
@@ -1051,7 +1065,8 @@ export function registerRoutes(app: Express): Server {
         const { spawn } = await import('child_process');
         const result = await new Promise<{ success: boolean; image_data?: string; error?: string }>((resolve, reject) => {
           const pythonProcess = spawn(getPythonCommand(), ['server/actual_deepface.py', 'store'], {
-            stdio: ['pipe', 'pipe', 'pipe']
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: getPythonEnv()
           });
           
           let output = '';
@@ -1295,7 +1310,8 @@ export function registerRoutes(app: Express): Server {
       return new Promise((resolve, reject) => {
         // Use Python face recognition service for direct comparison
         const pythonProcess = spawn(getPythonCommand(), ['server/face_recognition_service.py', 'compare'], {
-          stdio: ['pipe', 'pipe', 'pipe']
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: getPythonEnv()
         });
         
         let output = '';
@@ -1461,7 +1477,8 @@ export function registerRoutes(app: Express): Server {
           error?: string;
         }>((resolve, reject) => {
           const pythonProcess = spawn(pythonCmd, ['server/actual_deepface.py', 'verify'], {
-            stdio: ['pipe', 'pipe', 'pipe']
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: getPythonEnv()
           });
           
           let output = '';
