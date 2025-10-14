@@ -40,7 +40,7 @@ export interface IStorage {
   getUserByEmail(email: string, organizationId?: number): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUserFaceImage(userId: number, faceImageUrl: string): Promise<User>;
-  updateUserFaceEmbedding(userId: number, faceImageUrl: string, faceEmbedding: number[]): Promise<User>;
+  updateUserFaceEmbedding(userId: number, faceImageUrl: string | null | undefined, faceEmbedding: number[]): Promise<User>;
   updateUserPassword(userId: number, hashedPassword: string): Promise<User>;
   getAllEmployees(organizationId?: number): Promise<User[]>;
   getAllUsers(organizationId?: number): Promise<User[]>;
@@ -227,13 +227,18 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async updateUserFaceEmbedding(userId: number, faceImageUrl: string, faceEmbedding: number[]): Promise<User> {
+  async updateUserFaceEmbedding(userId: number, faceImageUrl: string | null | undefined, faceEmbedding: number[]): Promise<User> {
+    const updateData: Record<string, unknown> = {
+      faceEmbedding,
+    };
+
+    if (typeof faceImageUrl !== "undefined") {
+      updateData.faceImageUrl = faceImageUrl;
+    }
+
     const [user] = await db
       .update(users)
-      .set({ 
-        faceImageUrl,
-        faceEmbedding: faceEmbedding
-      })
+      .set(updateData)
       .where(eq(users.id, userId))
       .returning();
     return user;
