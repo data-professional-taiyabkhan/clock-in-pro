@@ -1453,7 +1453,13 @@ export function registerRoutes(app: Express): Server {
         const pythonCmd = getPythonCommand();
         console.log(`Spawning Python process: ${pythonCmd} server/actual_deepface.py verify`);
         
-        const verificationResult = await new Promise<{ success: boolean; result?: { verified: boolean; distance: number; threshold: number; model: string }; error?: string }>((resolve, reject) => {
+        const verificationResult = await new Promise<{
+          success: boolean;
+          engine?: string;
+          warning?: string;
+          result?: { verified: boolean; distance: number; threshold: number; model: string; details?: Record<string, unknown> };
+          error?: string;
+        }>((resolve, reject) => {
           const pythonProcess = spawn(pythonCmd, ['server/actual_deepface.py', 'verify'], {
             stdio: ['pipe', 'pipe', 'pipe']
           });
@@ -1527,12 +1533,18 @@ export function registerRoutes(app: Express): Server {
         });
         
         console.log(`=== DEEPFACE VERIFICATION RESULT ===`);
+        if (verificationResult.engine) {
+          console.log(`Verification engine: ${verificationResult.engine}`);
+        }
         console.log(`User being verified: ${req.user.email}`);
         console.log(`DeepFace success: ${verificationResult.success}`);
         console.log(`Distance calculated: ${verificationResult.result?.distance}`);
         console.log(`Threshold: ${verificationResult.result?.threshold}`);
         console.log(`Model: ${verificationResult.result?.model}`);
         console.log(`Match result: ${verificationResult.result?.verified ? 'PASS' : 'FAIL'}`);
+        if (verificationResult.warning) {
+          console.warn(`Verification warning: ${verificationResult.warning}`);
+        }
         console.log(`Error (if any): ${verificationResult.error}`);
         console.log(`=====================================`);
         
