@@ -9,12 +9,17 @@ nixPkgs = [
 
 [phases.install]
 cmds = [
-  "npm install --legacy-peer-deps",
-  "pip install --upgrade pip && pip install -r python-requirements.txt"
+  "npm install --legacy-peer-deps"
 ]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = [
+  "python3 -m venv --copies /app/.venv",
+  "/app/.venv/bin/pip install --upgrade pip",
+  "/app/.venv/bin/pip install -r python-requirements.txt",
+  "npm run build"
+]
+
 
 [start]
 cmd = "npm start"
