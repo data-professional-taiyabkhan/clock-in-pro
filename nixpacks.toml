@@ -11,9 +11,7 @@ nixPkgs = [
 [phases.install]
 cmds = [
   "npm install --legacy-peer-deps",
-  "python -m venv /opt/venv",
-  "/opt/venv/bin/pip install --upgrade pip",
-  "/opt/venv/bin/pip install -r python-requirements.txt"
+  "python -m venv /opt/venv && /opt/venv/bin/pip install --upgrade pip && /opt/venv/bin/pip install -r python-requirements.txt --verbose"
 ]
 
 [phases.build]
