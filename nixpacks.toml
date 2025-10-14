@@ -15,6 +15,10 @@ aptPkgs = [
   "libxrender1"
 ]
 
+# Disable Caddy phase - we use Express to serve the app
+[phases.caddy]
+cmds = []
+
 [phases.install]
 cmds = [
   "npm install --legacy-peer-deps"
