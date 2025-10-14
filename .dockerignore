@@ -2,7 +2,7 @@
 node_modules/
 test_venv/
 venv/
-# .venv/ - COMMENTED OUT: This is built during Docker build and must be included in the image
+.venv/
 __pycache__/
 *.pyc
 *.pyo
