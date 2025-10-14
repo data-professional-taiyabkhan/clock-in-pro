@@ -14,22 +14,10 @@ const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
 
 // Helper function to get the correct Python command based on OS
 function getPythonCommand(): string {
-  // In production, check if venv Python exists and use it
-  if (process.env.NODE_ENV === 'production') {
-    // Try to use venv Python (Railway/production deployment)
-    const venvPython = '/opt/venv/bin/python3';
-    try {
-      if (existsSync(venvPython)) {
-        console.log('Using venv Python:', venvPython);
-        return venvPython;
-      }
-    } catch (err) {
-      console.log('Venv Python not found, falling back to system Python');
-    }
-  }
-  // Local development: On Windows, use 'python', on Unix/Linux/Mac use 'python3'
+  // In production (Railway/containerized), use system python3 (packages installed system-wide)
+  // In development: On Windows use 'python', on Unix/Linux/Mac use 'python3'
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-  console.log('Using system Python:', pythonCmd);
+  console.log('Using Python:', pythonCmd);
   return pythonCmd;
 }
 
