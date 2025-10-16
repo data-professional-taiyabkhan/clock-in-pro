@@ -1,6 +1,6 @@
 # Core Face Recognition Dependencies
 deepface==0.0.79
-tensorflow==2.13.0
+tensorflow==2.16.1
 opencv-python-headless==4.8.1.78
 
 # Image Processing
