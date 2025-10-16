@@ -6,6 +6,14 @@ nixPkgs = [
   "bash",
   "coreutils"
 ]
+aptPkgs = [
+  "libstdc++6",
+  "libgl1",
+  "libglib2.0-0",
+  "libsm6",
+  "libxext6",
+  "libxrender1"
+]
 
 # Disable Caddy phase - we use Express to serve the app
 [phases.caddy]
