@@ -41,14 +41,10 @@ function getPythonCommand(): string {
   return pythonCmd;
 }
 
-// Helper function to get Python environment with LD_LIBRARY_PATH
+// Helper function to get Python environment
+// Since we use system Python (apt), no need to set LD_LIBRARY_PATH
 function getPythonEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  // Add library paths for OpenCV/TensorFlow dependencies
-  if (process.env.NODE_ENV === 'production') {
-    env.LD_LIBRARY_PATH = '/usr/lib/x86_64-linux-gnu:/usr/lib:/lib/x86_64-linux-gnu:/lib';
-  }
-  return env;
+  return { ...process.env };
 }
 
 // Calculate Euclidean distance between two face embedding vectors
