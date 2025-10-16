@@ -27,7 +27,7 @@ cmds = [
 
 [phases.build]
 cmds = [
-  "python3 -m venv --copies /app/.venv",
+  "/usr/bin/python3 -m venv --copies /app/.venv",
   "/app/.venv/bin/pip install --no-cache-dir --upgrade pip",
   "/app/.venv/bin/pip install --no-cache-dir -r python-requirements.txt",
   "npm run build"
