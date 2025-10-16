@@ -124,12 +124,12 @@ def verify_faces_with_simple_fallback(registered_image_data, captured_image_data
         )
 
     known_encoding = encode_face(registered_image_data)
-    comparison = compare_faces_simple(known_encoding, captured_image_data, tolerance=0.55)
+    comparison = compare_faces_simple(known_encoding, captured_image_data, tolerance=0.75)
 
     return {
         "verified": bool(comparison.get("is_match")),
         "distance": float(comparison.get("distance", 0.0)),
-        "threshold": float(comparison.get("tolerance", 0.55)),
+        "threshold": float(comparison.get("tolerance", 0.75)),
         "model": "opencv-simple",
         "details": {
             "engine": "opencv_fallback",
