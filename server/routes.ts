@@ -27,10 +27,11 @@ function toSafeUser(user: User) {
 
 // Helper function to get the correct Python command based on OS
 function getPythonCommand(): string {
-  // Always use system Python (from apt) in production to avoid library conflicts
+  // In production, use the venv Python that has all dependencies installed
   if (process.env.NODE_ENV === 'production') {
-    console.log('Using system Python: /usr/bin/python3');
-    return '/usr/bin/python3';
+    const venvPython = '/app/.venv/bin/python3';
+    console.log('Using venv Python:', venvPython);
+    return venvPython;
   }
   // Local development: On Windows use 'python', on Unix/Linux/Mac use 'python3'
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
