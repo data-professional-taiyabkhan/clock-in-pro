@@ -27,13 +27,10 @@ function toSafeUser(user: User) {
 
 // Helper function to get the correct Python command based on OS
 function getPythonCommand(): string {
-  // In production (Railway), use the app venv that persists in the image
+  // Always use system Python (from apt) in production to avoid library conflicts
   if (process.env.NODE_ENV === 'production') {
-    const appVenvPython = '/app/.venv/bin/python3';
-    if (existsSync(appVenvPython)) {
-      console.log('Using app venv Python:', appVenvPython);
-      return appVenvPython;
-    }
+    console.log('Using system Python: python3');
+    return 'python3';
   }
   // Local development: On Windows use 'python', on Unix/Linux/Mac use 'python3'
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
@@ -41,14 +38,10 @@ function getPythonCommand(): string {
   return pythonCmd;
 }
 
-// Helper function to get Python environment with LD_LIBRARY_PATH
+// Helper function to get Python environment
+// Since we use system Python (apt), no need to set LD_LIBRARY_PATH
 function getPythonEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  // Add library paths for OpenCV/TensorFlow dependencies
-  if (process.env.NODE_ENV === 'production') {
-    env.LD_LIBRARY_PATH = '/usr/lib/x86_64-linux-gnu:/usr/lib:/lib/x86_64-linux-gnu:/lib';
-  }
-  return env;
+  return { ...process.env };
 }
 
 // Calculate Euclidean distance between two face embedding vectors
