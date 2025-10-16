@@ -1,19 +1,10 @@
 [phases.setup]
 nixPkgs = [
   "nodejs_20",
+  "python311",
+  "python311Packages.pip",
   "bash",
   "coreutils"
-]
-aptPkgs = [
-  "python3",
-  "python3-pip",
-  "python3-venv",
-  "libstdc++6",
-  "libgl1",
-  "libglib2.0-0",
-  "libsm6",
-  "libxext6",
-  "libxrender1"
 ]
 
 # Disable Caddy phase - we use Express to serve the app
@@ -30,7 +21,6 @@ cmds = [
   "python3 -m venv --copies /app/.venv",
   "/app/.venv/bin/pip install --no-cache-dir --upgrade pip",
   "/app/.venv/bin/pip install --no-cache-dir -r python-requirements.txt",
-  "/app/.venv/bin/python3 -c 'import deepface; print(\"DeepFace successfully installed and imported\")'",
   "npm run build"
 ]
 

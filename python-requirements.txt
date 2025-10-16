@@ -1,12 +1,11 @@
 # Core Face Recognition Dependencies
 deepface==0.0.79
 tensorflow==2.13.0
-opencv-python==4.8.1.78
-opencv-contrib-python==4.8.1.78
+opencv-python-headless==4.8.1.78
 
 # Image Processing
 Pillow==10.0.1
 numpy==1.24.3
 
-# Note: dlib, face-recognition, and cmake removed 
+# Note: Using opencv-python-headless to avoid GUI library dependencies
 # DeepFace already handles all face recognition needs
