@@ -6,12 +6,8 @@ numpy>=1.23
 Pillow>=9.5
 # Core Face Recognition Dependencies
 deepface>=0.0.90
-tensorflow==2.14.0
+tensorflow>=2.16.0
 opencv-python-headless==4.8.1.78
-
-# Image Processing
-Pillow==10.0.1
-numpy==1.26.4
 
 # Note: Using opencv-python-headless to avoid GUI library dependencies
 # DeepFace already handles all face recognition needs
