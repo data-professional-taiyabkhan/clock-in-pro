@@ -5,6 +5,7 @@ import {
   employeeInvitations,
   employeeLocations,
   organizations,
+  attendanceVerificationLogs,
   type User,
   type InsertUser,
   type AttendanceRecord,
@@ -17,6 +18,8 @@ import {
   type InsertEmployeeLocation,
   type Organization,
   type InsertOrganization,
+  type AttendanceVerificationLog,
+  type InsertAttendanceVerificationLog,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -41,7 +44,9 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   updateUserFaceImage(userId: number, faceImageUrl: string): Promise<User>;
   updateUserFaceEmbedding(userId: number, faceImageUrl: string | null | undefined, faceEmbedding: number[]): Promise<User>;
+  updateUserFaceEmbeddingVector(userId: number, faceEmbeddingVector: string): Promise<User>;
   updateUserPassword(userId: number, hashedPassword: string): Promise<User>;
+  updateUserPin(userId: number, pinHash: string): Promise<User>;
   getAllEmployees(organizationId?: number): Promise<User[]>;
   getAllUsers(organizationId?: number): Promise<User[]>;
   deleteUser(id: number): Promise<void>;
@@ -72,6 +77,11 @@ export interface IStorage {
   getEmployeeLocations(userId: number): Promise<Location[]>;
   getUsersAtLocation(locationId: number): Promise<User[]>;
   getAllEmployeeLocationAssignments(organizationId?: number): Promise<(EmployeeLocation & { user: User; location: Location })[]>;
+  
+  // Audit logging operations
+  createVerificationLog(log: InsertAttendanceVerificationLog): Promise<AttendanceVerificationLog>;
+  getUserVerificationLogs(userId: number, organizationId: number, limit?: number): Promise<AttendanceVerificationLog[]>;
+  getOrganizationVerificationLogs(organizationId: number, limit?: number): Promise<AttendanceVerificationLog[]>;
   
   sessionStore: any;
 }
@@ -541,6 +551,65 @@ export class DatabaseStorage implements IStorage {
       console.error("Error getting employee location assignments:", error);
       return [];
     }
+  }
+
+  // New methods for enhanced security features
+
+  async updateUserFaceEmbeddingVector(userId: number, faceEmbeddingVector: string): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({ 
+        faceEmbeddingVector,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async updateUserPin(userId: number, pinHash: string): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({ 
+        pinHash,
+        pinEnabled: true,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  // Audit logging methods
+  async createVerificationLog(log: InsertAttendanceVerificationLog): Promise<AttendanceVerificationLog> {
+    const [verificationLog] = await db
+      .insert(attendanceVerificationLogs)
+      .values(log)
+      .returning();
+    return verificationLog;
+  }
+
+  async getUserVerificationLogs(userId: number, organizationId: number, limit: number = 50): Promise<AttendanceVerificationLog[]> {
+    const logs = await db
+      .select()
+      .from(attendanceVerificationLogs)
+      .where(and(
+        eq(attendanceVerificationLogs.userId, userId),
+        eq(attendanceVerificationLogs.organizationId, organizationId)
+      ))
+      .orderBy(desc(attendanceVerificationLogs.attemptTime))
+      .limit(limit);
+    return logs;
+  }
+
+  async getOrganizationVerificationLogs(organizationId: number, limit: number = 100): Promise<AttendanceVerificationLog[]> {
+    const logs = await db
+      .select()
+      .from(attendanceVerificationLogs)
+      .where(eq(attendanceVerificationLogs.organizationId, organizationId))
+      .orderBy(desc(attendanceVerificationLogs.attemptTime))
+      .limit(limit);
+    return logs;
   }
 }
 

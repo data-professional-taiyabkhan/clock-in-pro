@@ -48,14 +48,12 @@ export function CameraFaceCapture({
   const loadModels = async () => {
     try {
       setDetectionStatus('Loading face recognition models...');
-      
-      // Try to load models with better error handling
+      const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@latest/model';
       const modelPromises = [
-        faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
-        faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
-        faceapi.nets.faceRecognitionNet.loadFromUri('/models')
+        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
       ];
-      
       await Promise.all(modelPromises);
       setModelsLoaded(true);
       setDetectionStatus('AI models loaded - starting camera...');
@@ -100,6 +98,74 @@ export function CameraFaceCapture({
     }
   };
 
+  const passesQualityGates = (video: HTMLVideoElement, detection: any): { ok: boolean; message?: string } => {
+    const box = detection?.detection?.box;
+    if (!box || !canvasRef.current) return { ok: false, message: 'No face detected' };
+
+    // Face size gate (at least 20% of min(videoW, videoH))
+    const minDim = Math.min(video.videoWidth, video.videoHeight);
+    const faceMin = 0.20 * minDim;
+    if (box.width < faceMin || box.height < faceMin) {
+      return { ok: false, message: 'Move closer to the camera' };
+    }
+
+    // Blur gate using variance of Laplacian proxy (approx via gradients on downscaled frame)
+    try {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return { ok: true };
+      const s = 128;
+      canvas.width = s; canvas.height = s;
+      ctx.drawImage(video, 0, 0, s, s);
+      const img = ctx.getImageData(0, 0, s, s);
+      let variance = 0; let mean = 0; let n = 0;
+      for (let y = 1; y < s - 1; y += 2) {
+        for (let x = 1; x < s - 1; x += 2) {
+          const i = (y * s + x) * 4;
+          const gx = img.data[i - 4] - img.data[i + 4];
+          const gy = img.data[i - s * 4] - img.data[i + s * 4];
+          const g = Math.abs(gx) + Math.abs(gy);
+          mean += g; n++;
+        }
+      }
+      mean /= Math.max(1, n);
+      for (let y = 1; y < s - 1; y += 2) {
+        for (let x = 1; x < s - 1; x += 2) {
+          const i = (y * s + x) * 4;
+          const gx = img.data[i - 4] - img.data[i + 4];
+          const gy = img.data[i - s * 4] - img.data[i + s * 4];
+          const g = Math.abs(gx) + Math.abs(gy);
+          variance += (g - mean) * (g - mean);
+        }
+      }
+      variance /= Math.max(1, n);
+      if (variance < 50) { // heuristic threshold
+        return { ok: false, message: 'Image is blurry - hold still' };
+      }
+    } catch {}
+
+    // Brightness gate
+    try {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return { ok: true };
+      const s = 64;
+      canvas.width = s; canvas.height = s;
+      ctx.drawImage(video, 0, 0, s, s);
+      const img = ctx.getImageData(0, 0, s, s);
+      let brightness = 0; let count = 0;
+      for (let i = 0; i < img.data.length; i += 16) {
+        brightness += (img.data[i] + img.data[i + 1] + img.data[i + 2]) / 3;
+        count++;
+      }
+      const avg = brightness / Math.max(1, count);
+      if (avg < 60) return { ok: false, message: 'Too dark - improve lighting' };
+      if (avg > 210) return { ok: false, message: 'Too bright - reduce backlight' };
+    } catch {}
+
+    return { ok: true };
+  };
+
   const startFaceDetection = () => {
     if (detectionIntervalRef.current) {
       clearInterval(detectionIntervalRef.current);
@@ -116,24 +182,22 @@ export function CameraFaceCapture({
             if (modelsLoaded) {
               // Use face-api.js for accurate detection
               const detections = await faceapi
-                .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+                .detectAllFaces(video, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.6 }))
                 .withFaceLandmarks()
                 .withFaceDescriptors();
 
               if (detections.length > 0) {
                 const detection = detections[0];
                 const confidence = detection.detection.score;
+                const quality = passesQualityGates(video, detection);
                 
-                if (confidence > 0.7) { // Even higher confidence threshold for better accuracy
+                if (confidence > 0.7 && quality.ok) {
                   setIsDetected(true);
                   setFaceDescriptor(detection.descriptor);
-                  setDetectionStatus(`Face detected! (${Math.round(confidence * 100)}% confidence)`);
-                } else if (confidence > 0.4) {
-                  setIsDetected(false);
-                  setDetectionStatus(`Face detected but quality too low (${Math.round(confidence * 100)}%) - improve lighting and positioning`);
+                  setDetectionStatus(`Face ready (${Math.round(confidence * 100)}%)`);
                 } else {
                   setIsDetected(false);
-                  setDetectionStatus('No clear face detected - position your face in the frame');
+                  setDetectionStatus(quality.message || (confidence > 0.4 ? 'Face quality too low' : 'Position your face in the frame'));
                 }
               } else {
                 setIsDetected(false);
@@ -167,7 +231,7 @@ export function CameraFaceCapture({
           setDetectionStatus('Detection error - please try again');
         }
       }
-    }, 300); // Check every 300ms for better responsiveness
+    }, 300);
   };
 
   const analyzeImageForFace = (imageData: ImageData): boolean => {
@@ -178,7 +242,6 @@ export function CameraFaceCapture({
     // Simple face detection based on skin tone and brightness patterns
     let skinPixels = 0;
     let totalPixels = 0;
-    let brightnessVariation = 0;
     let avgBrightness = 0;
 
     // Sample pixels in the center area where face would typically be
@@ -268,7 +331,7 @@ export function CameraFaceCapture({
         for (let i = 0; i < 2; i++) {
           await new Promise(resolve => setTimeout(resolve, 100));
           try {
-            const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+            const detections = await faceapi.detectAllFaces(video, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.6 }))
               .withFaceLandmarks()
               .withFaceDescriptors();
             
@@ -288,9 +351,9 @@ export function CameraFaceCapture({
               avgDescriptor[idx] += val / descriptorSamples.length;
             });
           });
-          faceDescriptorData = JSON.stringify(avgDescriptor);
+          faceDescriptorData = JSON.stringify({ descriptor: avgDescriptor, imageData });
         } else {
-          faceDescriptorData = JSON.stringify(descriptorSamples[0]);
+          faceDescriptorData = JSON.stringify({ descriptor: descriptorSamples[0], imageData });
         }
       } else {
         // Enhanced fallback descriptor with multiple samples
@@ -449,12 +512,12 @@ export function CameraFaceCapture({
                   img.onload = async () => {
                     try {
                       const detections = await faceapi
-                        .detectAllFaces(img, new faceapi.TinyFaceDetectorOptions())
+                        .detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.6 }))
                         .withFaceLandmarks()
                         .withFaceDescriptors();
                       
                       if (detections.length > 0) {
-                        const descriptor = JSON.stringify(Array.from(detections[0].descriptor));
+                        const descriptor = JSON.stringify({ descriptor: Array.from(detections[0].descriptor), imageData: capturedImage });
                         onCapture(descriptor);
                       } else {
                         const context = canvasRef.current?.getContext('2d');
@@ -536,7 +599,7 @@ export function CameraFaceCapture({
                   }`}>
                     <span className="hidden sm:inline">{detectionStatus}</span>
                     <span className="sm:hidden">
-                      {isDetected ? "Face detected!" : "Position face"}
+                      {isDetected ? "Face ready" : "Position face"}
                     </span>
                   </div>
                 </>

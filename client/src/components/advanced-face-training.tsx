@@ -94,7 +94,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
     const loadModels = async () => {
       try {
         await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
+          faceapi.nets.ssdMobilenetv1.loadFromUri('/models'),
           faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
           faceapi.nets.faceRecognitionNet.loadFromUri('/models'),
           faceapi.nets.faceExpressionNet.loadFromUri('/models')
@@ -147,7 +147,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
         // Try face-api.js detection first
         const detections = await faceapi.detectAllFaces(
           videoRef.current!,
-          new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })
+          new faceapi.SsdMobilenetv1Options({ minConfidence: 0.6 })
         ).withFaceLandmarks().withFaceDescriptors();
 
         const hasValidFace = detections.length > 0 && detections[0].detection.score > 0.7;
@@ -275,7 +275,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
 
       try {
         // Try face-api.js descriptor first
-        const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+        const detections = await faceapi.detectAllFaces(video, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.6 }))
           .withFaceLandmarks()
           .withFaceDescriptors();
 

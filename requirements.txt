@@ -1,6 +1,12 @@
+# Production-grade face recognition
+insightface==0.7.3
+onnxruntime==1.18.1
+onnx==1.16.1
+numpy>=1.23
+Pillow>=9.5
 # Core Face Recognition Dependencies
-deepface==0.0.79
-tensorflow==2.13.0
+deepface>=0.0.90
+tensorflow==2.14.0
 opencv-python==4.8.1.78
 opencv-contrib-python==4.8.1.78
 

@@ -169,6 +169,7 @@ function toast({ ...props }: Toast) {
 }
 
 function useToast() {
+  // Always call hooks at the top level
   const [state, setState] = useState<State>(memoryState)
 
   useEffect(() => {
@@ -179,7 +180,7 @@ function useToast() {
         listeners.splice(index, 1)
       }
     }
-  }, [state])
+  }, [])
 
   return {
     ...state,
