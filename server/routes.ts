@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { setupAuth, requireAuth, requireManager, requireAdmin, requireDeveloper, hashPassword, comparePasswords } from "./auth";
 import { storage } from "./storage";
-import { insertAttendanceRecordSchema, insertLocationSchema, loginSchema, registerSchema, insertOrganizationSchema, users, employeeInvitations, locations, employeeLocations } from "@shared/schema";
+import { insertAttendanceRecordSchema, insertLocationSchema, loginSchema, registerSchema, insertOrganizationSchema, setupPinSchema, verifyPinSchema, users, employeeInvitations, locations, employeeLocations } from "@shared/schema";
 import type { User } from "@shared/schema";
 import { z } from "zod";
 import { desc, eq, and } from "drizzle-orm";
@@ -10,6 +10,10 @@ import { db } from "./db";
 import crypto from "crypto";
 import { format, differenceInMinutes, differenceInSeconds, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subMonths } from "date-fns";
 import { existsSync } from "fs";
+import { AuditLogger } from "./lib/audit-logger";
+import { createRateLimitMiddleware, createAuthRateLimitMiddleware } from "./lib/rate-limiter";
+import { DeviceFingerprinting } from "./lib/device-fingerprinting";
+import { AnomalyDetection } from "./lib/anomaly-detection";
 
 const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
 
@@ -650,6 +654,100 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * c; // Distance in meters
 }
 
+// Liveness detection using Python service
+async function performLivenessDetection(imageData: string): Promise<{
+  success: boolean;
+  livenessScore: number;
+  isLive: boolean;
+  analysis?: any;
+  recommendations?: string[];
+  error?: string;
+}> {
+  try {
+    const { spawn } = await import('child_process');
+    
+    return new Promise((resolve) => {
+      const pythonProcess = spawn(getPythonCommand(), ['server/liveness_detection.py', 'single'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: getPythonEnv()
+      });
+      
+      let output = '';
+      let errorOutput = '';
+      
+      pythonProcess.on('error', (error) => {
+        console.error('Failed to start liveness detection:', error);
+        resolve({
+          success: false,
+          livenessScore: 0,
+          isLive: false,
+          error: `Failed to start liveness detection: ${error.message}`
+        });
+      });
+      
+      pythonProcess.stdin.on('error', (error) => {
+        console.error('Python stdin error:', error);
+      });
+      
+      pythonProcess.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+      
+      pythonProcess.stderr.on('data', (data) => {
+        errorOutput += data.toString();
+      });
+      
+      pythonProcess.on('close', (code) => {
+        if (code === 0) {
+          try {
+            const result = JSON.parse(output);
+            console.log(`Liveness detection result:`, {
+              success: result.success,
+              livenessScore: result.liveness_score,
+              isLive: result.is_live
+            });
+            resolve({
+              success: result.success,
+              livenessScore: result.liveness_score || 0,
+              isLive: result.is_live || false,
+              analysis: result.analysis,
+              recommendations: result.recommendations
+            });
+          } catch (parseError) {
+            console.error('Failed to parse liveness detection result:', output);
+            resolve({
+              success: false,
+              livenessScore: 0,
+              isLive: false,
+              error: 'Failed to parse liveness detection result'
+            });
+          }
+        } else {
+          console.error('Liveness detection failed:', errorOutput);
+          resolve({
+            success: false,
+            livenessScore: 0,
+            isLive: false,
+            error: `Liveness detection failed: ${errorOutput}`
+          });
+        }
+      });
+      
+      const inputData = JSON.stringify({ image_data: imageData });
+      pythonProcess.stdin.write(inputData);
+      pythonProcess.stdin.end();
+    });
+  } catch (error) {
+    console.error('Liveness detection error:', error);
+    return {
+      success: false,
+      livenessScore: 0,
+      isLive: false,
+      error: error.message
+    };
+  }
+}
+
 // Generate face embedding from image using the Python face recognition service
 async function compareFacesWithPython(
   knownEncoding: number[] | string, 
@@ -909,57 +1007,149 @@ export function registerRoutes(app: Express): Server {
           return res.status(400).json({ message: "Face image data is too small" });
         }
 
+        // Store the face image
         updatedUser = await storage.updateUserFaceImage(req.user!.id, faceData);
+
+        // Generate face embedding using InsightFace
+        console.log(`Generating face embedding (InsightFace) for user ${req.user!.email}`);
+        try {
+          const { spawn } = await import('child_process');
+          const pythonCmd = getPythonCommand();
+          
+          const embeddingResult = await new Promise<{
+            success: boolean;
+            embedding?: number[];
+            error?: string;
+          }>((resolve) => {
+            const pythonProcess = spawn(pythonCmd, ['server/insightface_embed.py'], {
+              stdio: ['pipe', 'pipe', 'pipe'],
+              env: getPythonEnv()
+            });
+            
+            let output = '';
+            let errorOutput = '';
+            
+            pythonProcess.on('error', (error) => {
+              console.error('Failed to start InsightFace process:', error);
+              resolve({ success: false, error: `Failed to start embedding: ${error.message}` });
+            });
+            pythonProcess.stdin.on('error', (error) => console.error('Python stdin error:', error));
+            pythonProcess.stdout.on('data', (data) => (output += data.toString()));
+            pythonProcess.stderr.on('data', (data) => (errorOutput += data.toString()));
+            pythonProcess.on('close', (code) => {
+              if (code === 0) {
+                try {
+                  const result = JSON.parse(output);
+                  if (result.success && Array.isArray(result.embedding)) {
+                    resolve({ success: true, embedding: result.embedding });
+                  } else {
+                    resolve({ success: false, error: result.error || 'Unknown embedding error' });
+                  }
+                } catch (e) {
+                  resolve({ success: false, error: `Invalid response: ${output}` });
+                }
+              } else {
+                resolve({ success: false, error: errorOutput || 'InsightFace failed' });
+              }
+            });
+            const inputData = JSON.stringify({ cmd: 'embed', image: faceData });
+            pythonProcess.stdin.write(inputData);
+            pythonProcess.stdin.end();
+          });
+
+          if (embeddingResult.success && embeddingResult.embedding) {
+            // Store the embedding
+            updatedUser = await storage.updateUserFaceEmbedding(
+              req.user!.id,
+              faceData, // Store the image URL
+              embeddingResult.embedding
+            );
+            console.log(`Face embedding stored for user ${req.user!.email}`);
+          } else {
+            console.warn(`Failed to generate embedding for user ${req.user!.email}: ${embeddingResult.error}`);
+            // Continue without embedding - the image is still stored
+          }
+        } catch (error) {
+          console.error('Error generating face embedding:', error);
+          // Continue without embedding - the image is still stored
+        }
       } else {
+        // Handle embedding or advanced training data directly
         let embedding: number[] | null = null;
+        let trainingPayload: any | null = null;
 
         try {
           const parsed = JSON.parse(faceData);
-          if (Array.isArray(parsed)) {
+
+          // Advanced training payload: { version, type: 'advanced-training', primaryDescriptor, poseDescriptors[] }
+          if (parsed && typeof parsed === 'object' && parsed.type === 'advanced-training' && Array.isArray(parsed.primaryDescriptor)) {
+            trainingPayload = parsed;
+
+            // Build centroid from primary + pose descriptors when available
+            const descriptors: number[][] = [];
+            if (Array.isArray(parsed.primaryDescriptor)) descriptors.push(parsed.primaryDescriptor);
+            if (Array.isArray(parsed.poseDescriptors)) {
+              for (const pd of parsed.poseDescriptors) {
+                if (pd && Array.isArray(pd.descriptor)) descriptors.push(pd.descriptor);
+              }
+            }
+
+            if (descriptors.length > 0) {
+              const length = descriptors[0].length;
+              const centroid = new Array(length).fill(0);
+              for (const desc of descriptors) {
+                if (Array.isArray(desc) && desc.length === length) {
+                  for (let i = 0; i < length; i++) centroid[i] += desc[i];
+                }
+              }
+              for (let i = 0; i < length; i++) centroid[i] /= descriptors.length;
+              embedding = centroid;
+            }
+          } else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as any).descriptor)) {
+            // Payload from camera-face-capture: { descriptor: number[], imageData: string }
+            const desc = (parsed as any).descriptor as unknown[];
+            const normalized = desc
+              .map((value) => (typeof value === "number" ? value : Number.parseFloat(String(value))))
+              .filter((value) => Number.isFinite(value));
+            if (normalized.length === desc.length && normalized.length > 0) embedding = normalized as number[];
+          } else if (Array.isArray(parsed)) {
             const normalized = parsed
               .map((value) => (typeof value === "number" ? value : Number.parseFloat(value)))
               .filter((value) => Number.isFinite(value));
-
-            if (normalized.length === parsed.length && normalized.length > 0) {
-              embedding = normalized;
-            }
+            if (normalized.length === parsed.length && normalized.length > 0) embedding = normalized;
           } else if (parsed && typeof parsed === "object") {
+            // Generic object of numbers -> flatten
             const numbers: number[] = [];
             const collectNumbers = (value: unknown) => {
-              if (typeof value === "number" && Number.isFinite(value)) {
-                numbers.push(value);
-                return;
-              }
-
-              if (Array.isArray(value)) {
-                value.forEach(collectNumbers);
-                return;
-              }
-
-              if (value && typeof value === "object") {
-                Object.values(value as Record<string, unknown>).forEach(collectNumbers);
-              }
+              if (typeof value === "number" && Number.isFinite(value)) { numbers.push(value); return; }
+              if (Array.isArray(value)) { value.forEach(collectNumbers); return; }
+              if (value && typeof value === "object") { Object.values(value as Record<string, unknown>).forEach(collectNumbers); }
             };
-
             collectNumbers(parsed);
-
-            if (numbers.length > 0) {
-              embedding = numbers;
-            }
+            if (numbers.length > 0) embedding = numbers;
           }
         } catch (error) {
-          console.warn("Failed to parse face embedding data", error);
+          console.warn("Failed to parse face embedding/training data", error);
         }
 
         if (!embedding) {
           return res.status(400).json({ message: "Invalid face data provided" });
         }
 
+        // Save embedding (centroid) and optionally persist full training payload for future upgrades
         updatedUser = await storage.updateUserFaceEmbedding(
           req.user!.id,
           req.user?.faceImageUrl ?? undefined,
           embedding
         );
+
+        if (trainingPayload) {
+          try {
+            await storage.updateUserFaceEmbeddingVector(req.user!.id, JSON.stringify(trainingPayload));
+          } catch (e) {
+            console.warn('Failed to store training payload vector', e);
+          }
+        }
       }
 
       if (!updatedUser) {
@@ -971,6 +1161,7 @@ export function registerRoutes(app: Express): Server {
       res.json({
         message: "Face registered successfully",
         user: toSafeUser(updatedUser),
+        hasEmbedding: !!updatedUser.faceEmbedding
       });
     } catch (error) {
       console.error("Face registration error:", error);
@@ -1381,31 +1572,89 @@ export function registerRoutes(app: Express): Server {
     }
   }
 
-  app.post("/api/verify-face", requireAuth, async (req, res) => {
+  // Enhanced face verification with liveness detection and audit logging
+  app.post("/api/verify-face", 
+    requireAuth, 
+    createAuthRateLimitMiddleware('faceVerification'), 
+    async (req, res) => {
     try {
-      const { imageData, location, userLocation, action } = req.body;
+      const { imageData, descriptor, location, userLocation, action, deviceInfo: clientDeviceInfo } = req.body;
       const finalLocation = location || userLocation;
+      const deviceInfo = AuditLogger.extractDeviceInfo(req);
+      const fingerprint = DeviceFingerprinting.generateFingerprint(req, clientDeviceInfo);
       
-      console.log("Face verification request:", {
+      // Check for suspicious activity
+      const suspiciousActivities = await DeviceFingerprinting.detectSuspiciousActivity(
+        req.user!.id,
+        DeviceFingerprinting.extractDeviceInfo(req, clientDeviceInfo),
+        finalLocation ? { latitude: parseFloat(finalLocation.latitude), longitude: parseFloat(finalLocation.longitude) } : undefined
+      );
+      
+      // Log suspicious activities
+      for (const activity of suspiciousActivities) {
+        console.warn(`[SECURITY] Suspicious activity detected for user ${req.user!.id}:`, activity);
+      }
+      
+      // Register device if new
+      const isKnownDevice = await DeviceFingerprinting.isKnownDevice(req.user!.id, fingerprint);
+      if (!isKnownDevice) {
+        await DeviceFingerprinting.registerDevice(
+          req.user!.id,
+          DeviceFingerprinting.extractDeviceInfo(req, clientDeviceInfo),
+          false // Not trusted initially
+        );
+      } else {
+        await DeviceFingerprinting.updateDeviceActivity(req.user!.id, fingerprint);
+      }
+      
+      console.log("Enhanced face verification request:", {
         user: req.user?.email,
         hasImageData: !!imageData,
+        hasDescriptor: Array.isArray(descriptor),
         hasLocation: !!finalLocation,
         locationData: finalLocation,
         action
       });
       
       if (!req.user?.faceImageUrl) {
-        return res.status(400).json({ message: "No face image registered. Please register your face first." });
+        // Log failed attempt
+        await AuditLogger.logFaceVerification(
+          req.user!.id,
+          req.user!.organizationId,
+          false,
+          {
+            deviceInfo,
+            failureReason: "No face image registered",
+            metadata: { action }
+          }
+        );
+        
+        return res.status(400).json({ 
+          message: "No face image registered. Please register your face first.",
+          canUsePin: req.user.pinEnabled
+        });
       }
 
-      // Location verification - check if user is assigned to any locations
+      // Step 1: Location verification - check if user is assigned to any locations
       const assignedLocations = await storage.getEmployeeLocations(req.user!.id);
       console.log("User assigned locations:", assignedLocations);
       
       if (assignedLocations.length > 0) {
         if (!finalLocation || (!finalLocation.latitude || !finalLocation.longitude)) {
+          await AuditLogger.logFaceVerification(
+            req.user!.id,
+            req.user!.organizationId,
+            false,
+            {
+              deviceInfo,
+              failureReason: "Location verification required",
+              metadata: { action }
+            }
+          );
+          
           return res.status(400).json({
-            message: "Location verification required. Please enable location services and try again."
+            message: "Location verification required. Please enable location services and try again.",
+            canUsePin: req.user.pinEnabled
           });
         }
 
@@ -1433,35 +1682,264 @@ export function registerRoutes(app: Express): Server {
 
         if (!closestLocation) {
           const locationNames = assignedLocations.map(loc => loc.name).join(', ');
+          
+          await AuditLogger.logFaceVerification(
+            req.user!.id,
+            req.user!.organizationId,
+            false,
+            {
+              locationLatitude: parseFloat(finalLocation.latitude),
+              locationLongitude: parseFloat(finalLocation.longitude),
+              deviceInfo,
+              failureReason: `Not within range of assigned locations: ${locationNames}`,
+              metadata: { action, minDistance }
+            }
+          );
+          
           return res.status(403).json({ 
-            message: `You are not within range of any assigned work location (${locationNames}). Please move closer to your assigned work location.` 
+            message: `You are not within range of any assigned work location (${locationNames}). Please move closer to your assigned work location.`,
+            canUsePin: req.user.pinEnabled
           });
         }
         
         console.log(`Location verification passed for ${closestLocation.name} (${minDistance}m away)`);
       }
 
-      // Simple face verification using face_recognition approach
-      console.log(`Starting simple face verification for ${req.user.email}`);
+      // Step 2: Liveness Detection
+      console.log(`Starting liveness detection for ${req.user.email}`);
+      
+      const livenessResult = await performLivenessDetection(imageData);
+      
+      if (!livenessResult.success) {
+        await AuditLogger.logFaceVerification(
+          req.user!.id,
+          req.user!.organizationId,
+          false,
+          {
+            locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+            locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+            deviceInfo,
+            failureReason: `Liveness detection failed: ${livenessResult.error}`,
+            metadata: { action, livenessScore: livenessResult.livenessScore }
+          }
+        );
+        
+        return res.status(400).json({
+          verified: false,
+          message: `Liveness detection failed: ${livenessResult.error}`,
+          canUsePin: req.user.pinEnabled
+        });
+      }
+
+      if (!livenessResult.isLive) {
+        await AuditLogger.logFaceVerification(
+          req.user!.id,
+          req.user!.organizationId,
+          false,
+          {
+            locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+            locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+            livenessScore: livenessResult.livenessScore,
+            deviceInfo,
+            failureReason: `Liveness detection failed - possible spoofing attempt`,
+            metadata: { 
+              action, 
+              livenessScore: livenessResult.livenessScore,
+              analysis: livenessResult.analysis,
+              recommendations: livenessResult.recommendations
+            }
+          }
+        );
+        
+        return res.status(400).json({
+          verified: false,
+          message: `Liveness verification failed. ${livenessResult.recommendations?.[0] || 'Please ensure you are using a live camera feed.'}`,
+          canUsePin: req.user.pinEnabled,
+          livenessScore: livenessResult.livenessScore,
+          recommendations: livenessResult.recommendations
+        });
+      }
+
+      console.log(`Liveness detection passed with score: ${livenessResult.livenessScore}`);
+
+      // Step 3: Face Recognition
+      console.log(`Starting face recognition for ${req.user.email}`);
       
       try {
         const capturedImage = imageData;
-        
-        // Check if user has registered face image (DeepFace stores images directly)
         const registeredFaceImage = req.user.faceImageUrl;
+        
         if (!registeredFaceImage) {
+          await AuditLogger.logFaceVerification(
+            req.user!.id,
+            req.user!.organizationId,
+            false,
+            {
+              locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+              locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+              livenessScore: livenessResult.livenessScore,
+              deviceInfo,
+              failureReason: "No face template found",
+              metadata: { action }
+            }
+          );
+          
           return res.status(400).json({
             verified: false,
-            message: "No face template found for your account. Please contact your manager to register your face."
+            message: "No face template found for your account. Please contact your manager to register your face.",
+            canUsePin: req.user.pinEnabled
           });
         }
         
+        // If client provided descriptor and we have stored embedding, verify quickly via vector distance first
+        if (Array.isArray(descriptor) && Array.isArray(req.user.faceEmbedding)) {
+          try {
+            // Normalize embeddings then compute distance
+            const normalize = (v: number[]) => {
+              const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
+              return v.map(x => x / norm);
+            };
+            const reg = normalize(req.user.faceEmbedding as number[]);
+            const probe = normalize(descriptor as number[]);
+            const dist = calculateEuclideanDistance(reg, probe);
+            const threshold = 0.6;
+            if (dist <= threshold) {
+              // Fast-path success; continue to attendance creation
+              console.log(`Fast-path descriptor verification passed: distance ${dist}`);
+              const faceConfidence = Math.max(0, 100 - (dist * 100));
+              await AuditLogger.logFaceVerification(
+                req.user!.id,
+                req.user!.organizationId,
+                true,
+                {
+                  faceConfidence,
+                  livenessScore: livenessResult.livenessScore,
+                  locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+                  locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+                  deviceInfo,
+                  metadata: { action, distance: dist, threshold }
+                }
+              );
+              // Attendance
+              let attendanceRecord;
+              if (action === 'out') {
+                const today = new Date().toISOString().split('T')[0];
+                const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
+                if (!todayRecord || todayRecord.clockOutTime) {
+                  return res.status(400).json({
+                    verified: false,
+                    message: "No active clock-in found for today or already clocked out.",
+                    canUsePin: req.user.pinEnabled
+                  });
+                }
+                attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, { clockOutTime: new Date() });
+              } else {
+                attendanceRecord = await storage.createAttendanceRecord({
+                  userId: req.user.id,
+                  organizationId: req.user.organizationId,
+                  clockInTime: new Date(),
+                  date: new Date().toISOString().split('T')[0],
+                });
+              }
+              return res.json({
+                verified: true,
+                distance: dist,
+                threshold,
+                faceConfidence,
+                livenessScore: livenessResult.livenessScore,
+                action: action || 'in',
+                message: `Face verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`,
+                attendance: attendanceRecord
+              });
+            }
+            console.log(`Fast-path descriptor verification failed: distance ${dist}, falling back to DeepFace`);
+          } catch (e) {
+            console.warn('Descriptor fast-path failed:', e);
+          }
+        }
+
+        console.log(`Comparing captured image using InsightFace embeddings (fallback to DeepFace image-verify)`);
+        // Attempt InsightFace embedding for captured image and compare to stored embedding centroid
+        if (req.user.faceEmbedding && Array.isArray(req.user.faceEmbedding)) {
+          try {
+            const { spawn } = await import('child_process');
+            const pythonCmd = getPythonCommand();
+            const capturedEmbeddingResult = await new Promise<{ success: boolean; embedding?: number[]; error?: string }>((resolve) => {
+              const pythonProcess = spawn(pythonCmd, ['server/insightface_embed.py'], {
+                stdio: ['pipe', 'pipe', 'pipe'],
+                env: getPythonEnv()
+              });
+              let output = ''; let errorOutput = '';
+              pythonProcess.on('error', (error) => resolve({ success: false, error: error.message }));
+              pythonProcess.stdout.on('data', (d) => (output += d.toString()));
+              pythonProcess.stderr.on('data', (d) => (errorOutput += d.toString()));
+              pythonProcess.on('close', (code) => {
+                if (code === 0) {
+                  try {
+                    const result = JSON.parse(output);
+                    if (result.success && Array.isArray(result.embedding)) return resolve({ success: true, embedding: result.embedding });
+                    return resolve({ success: false, error: result.error || 'Unknown embedding error' });
+                  } catch {
+                    return resolve({ success: false, error: `Invalid response: ${output}` });
+                  }
+                }
+                return resolve({ success: false, error: errorOutput || 'Embedding process failed' });
+              });
+              const inputData = JSON.stringify({ cmd: 'embed', image: capturedImage });
+              pythonProcess.stdin.write(inputData);
+              pythonProcess.stdin.end();
+            });
+
+            if (capturedEmbeddingResult.success && capturedEmbeddingResult.embedding) {
+              // Compare using cosine/euclidean (embeddings are L2-normalized 512D typically)
+              const reg = req.user.faceEmbedding as number[];
+              const probe = capturedEmbeddingResult.embedding;
+              const normalize = (v: number[]) => {
+                const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
+                return v.map(x => x / norm);
+              };
+              const distance = calculateEuclideanDistance(normalize(reg), normalize(probe));
+              const threshold = 0.85; // InsightFace euclidean on normalized vectors (tunable)
+              if (distance <= threshold) {
+                const faceConfidence = Math.max(0, 100 - (distance * 100));
+                await AuditLogger.logFaceVerification(
+                  req.user!.id,
+                  req.user!.organizationId,
+                  true,
+                  {
+                    faceConfidence,
+                    livenessScore: livenessResult.livenessScore,
+                    locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+                    locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+                    deviceInfo,
+                    metadata: { action, distance, threshold, engine: 'insightface' }
+                  }
+                );
+                let attendanceRecord;
+                if (action === 'out') {
+                  const today = new Date().toISOString().split('T')[0];
+                  const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
+                  if (!todayRecord || todayRecord.clockOutTime) {
+                    return res.status(400).json({ verified: false, message: "No active clock-in found for today or already clocked out.", canUsePin: req.user.pinEnabled });
+                  }
+                  attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, { clockOutTime: new Date() });
+                } else {
+                  attendanceRecord = await storage.createAttendanceRecord({ userId: req.user.id, organizationId: req.user.organizationId, clockInTime: new Date(), date: new Date().toISOString().split('T')[0] });
+                }
+                return res.json({ verified: true, distance, threshold, faceConfidence, livenessScore: livenessResult.livenessScore, action: action || 'in', message: `Face verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`, attendance: attendanceRecord });
+              }
+              console.log(`InsightFace embedding comparison failed: distance ${distance}, fallback to DeepFace`);
+            }
+          } catch (e) {
+            console.warn('InsightFace compare failed, fallback to DeepFace:', e);
+          }
+        }
+
         console.log(`Comparing captured image against registered face image using DeepFace`);
         
         // Face comparison using DeepFace
         const { spawn } = await import('child_process');
         const pythonCmd = getPythonCommand();
-        console.log(`Spawning Python process: ${pythonCmd} server/actual_deepface.py verify`);
         
         const verificationResult = await new Promise<{
           success: boolean;
@@ -1478,16 +1956,13 @@ export function registerRoutes(app: Express): Server {
           let output = '';
           let errorOutput = '';
           
-          // Handle process startup errors
           pythonProcess.on('error', (error) => {
             console.error('Failed to start Python process:', error);
             reject(new Error(`Failed to start face verification: ${error.message}`));
           });
           
-          // Handle stdin errors (EPIPE, etc.) to prevent crashes
           pythonProcess.stdin.on('error', (error) => {
             console.error('Python stdin error:', error);
-            // Don't crash, the close handler will handle it
           });
           
           pythonProcess.stdout.on('data', (data) => {
@@ -1505,10 +1980,6 @@ export function registerRoutes(app: Express): Server {
           pythonProcess.on('close', (code) => {
             if (code === 0) {
               try {
-                console.log('DeepFace output:', output);
-                console.log('DeepFace error output:', errorOutput);
-                
-                // Extract JSON from output (DeepFace may have download messages mixed in)
                 const lines = output.split('\n');
                 let jsonLine = '';
                 for (const line of lines) {
@@ -1530,7 +2001,6 @@ export function registerRoutes(app: Express): Server {
               }
             } else {
               console.error('DeepFace failed with code:', code);
-              console.error('Error output:', errorOutput);
               reject(new Error(`Face verification failed: ${errorOutput}`));
             }
           });
@@ -1543,45 +2013,75 @@ export function registerRoutes(app: Express): Server {
           pythonProcess.stdin.end();
         });
         
-        console.log(`=== DEEPFACE VERIFICATION RESULT ===`);
-        if (verificationResult.engine) {
-          console.log(`Verification engine: ${verificationResult.engine}`);
-        }
-        console.log(`User being verified: ${req.user.email}`);
-        console.log(`DeepFace success: ${verificationResult.success}`);
-        console.log(`Distance calculated: ${verificationResult.result?.distance}`);
+        console.log(`=== ENHANCED FACE VERIFICATION RESULT ===`);
+        console.log(`User: ${req.user.email}`);
+        console.log(`Liveness Score: ${livenessResult.livenessScore}`);
+        console.log(`Face Match: ${verificationResult.result?.verified ? 'PASS' : 'FAIL'}`);
+        console.log(`Distance: ${verificationResult.result?.distance}`);
         console.log(`Threshold: ${verificationResult.result?.threshold}`);
-        console.log(`Model: ${verificationResult.result?.model}`);
-        console.log(`Match result: ${verificationResult.result?.verified ? 'PASS' : 'FAIL'}`);
-        if (verificationResult.warning) {
-          console.warn(`Verification warning: ${verificationResult.warning}`);
-        }
-        console.log(`Error (if any): ${verificationResult.error}`);
-        console.log(`=====================================`);
+        console.log(`=========================================`);
         
         if (!verificationResult.success) {
+          await AuditLogger.logFaceVerification(
+            req.user!.id,
+            req.user!.organizationId,
+            false,
+            {
+              locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+              locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+              livenessScore: livenessResult.livenessScore,
+              deviceInfo,
+              failureReason: `Face recognition service error: ${verificationResult.error}`,
+              metadata: { action }
+            }
+          );
+          
           console.log(`✗ Face verification FAILED for ${req.user.email} - Error: ${verificationResult.error}`);
-          res.status(400).json({
+          return res.status(400).json({
             verified: false,
-            message: `Face verification failed: ${verificationResult.error}`
+            message: `Face verification failed: ${verificationResult.error}`,
+            canUsePin: req.user.pinEnabled
           });
-          return;
         }
         
+        const faceConfidence = verificationResult.result?.verified ? 
+          Math.max(0, 100 - (verificationResult.result.distance * 100)) : 0;
+        
         if (verificationResult.result?.verified) {
-          console.log(`✓ Face verification successful for ${req.user.email} - Distance: ${verificationResult.result.distance}, Threshold: ${verificationResult.result.threshold}`);
+          console.log(`✓ Face verification successful for ${req.user.email}`);
+          
+          // Log successful verification
+          await AuditLogger.logFaceVerification(
+            req.user!.id,
+            req.user!.organizationId,
+            true,
+            {
+              faceConfidence,
+              livenessScore: livenessResult.livenessScore,
+              locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+              locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+              deviceInfo,
+              metadata: { 
+                action,
+                distance: verificationResult.result.distance,
+                threshold: verificationResult.result.threshold,
+                model: verificationResult.result.model,
+                analysis: livenessResult.analysis
+              }
+            }
+          );
           
           // Create attendance record based on action
           let attendanceRecord;
           if (action === 'out') {
-            // Clock out - update existing record
             const today = new Date().toISOString().split('T')[0];
             const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
             
             if (!todayRecord || todayRecord.clockOutTime) {
               return res.status(400).json({
                 verified: false,
-                message: "No active clock-in found for today or already clocked out."
+                message: "No active clock-in found for today or already clocked out.",
+                canUsePin: req.user.pinEnabled
               });
             }
             
@@ -1589,7 +2089,6 @@ export function registerRoutes(app: Express): Server {
               clockOutTime: new Date(),
             });
           } else {
-            // Clock in - create new record
             attendanceRecord = await storage.createAttendanceRecord({
               userId: req.user.id,
               organizationId: req.user.organizationId,
@@ -1602,30 +2101,390 @@ export function registerRoutes(app: Express): Server {
             verified: true,
             distance: verificationResult.result?.distance,
             threshold: verificationResult.result?.threshold,
+            faceConfidence,
+            livenessScore: livenessResult.livenessScore,
             action: action || 'in',
             message: `Face verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`,
-            attendance: attendanceRecord
+            attendance: attendanceRecord,
+            quality_analysis: verificationResult.result?.quality_analysis,
+            recommendations: verificationResult.result?.recommendations
           });
         } else {
-          console.log(`✗ Face verification REJECTED for ${req.user.email} - Distance: ${verificationResult.result?.distance}, Threshold: ${verificationResult.result?.threshold}`);
-          console.log(`This is CORRECT behavior - different person attempting to access ${req.user.email}'s account`);
-          res.status(400).json({
+          await AuditLogger.logFaceVerification(
+            req.user!.id,
+            req.user!.organizationId,
+            false,
+            {
+              faceConfidence,
+              livenessScore: livenessResult.livenessScore,
+              locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+              locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+              deviceInfo,
+              failureReason: "Face match failed - possible different person",
+              metadata: { 
+                action,
+                distance: verificationResult.result?.distance,
+                threshold: verificationResult.result?.threshold,
+                analysis: livenessResult.analysis
+              }
+            }
+          );
+          
+          console.log(`✗ Face verification REJECTED for ${req.user.email}`);
+          return res.status(400).json({
             verified: false,
             distance: verificationResult.result?.distance,
             threshold: verificationResult.result?.threshold,
-            message: `Face doesn't match registered face. Distance: ${verificationResult.result?.distance?.toFixed(4) || 'unknown'}, Required: ${verificationResult.result?.threshold || 'unknown'}`
+            faceConfidence,
+            livenessScore: livenessResult.livenessScore,
+            message: `Face verification failed. ${verificationResult.result?.recommendations?.[0] || 'Please try again with better lighting.'}`,
+            canUsePin: req.user.pinEnabled,
+            quality_analysis: verificationResult.result?.quality_analysis,
+            recommendations: verificationResult.result?.recommendations,
+            technical_details: {
+              distance: verificationResult.result?.distance?.toFixed(4),
+              threshold: verificationResult.result?.threshold,
+              livenessScore: livenessResult.livenessScore
+            }
           });
         }
       } catch (error) {
+        await AuditLogger.logFaceVerification(
+          req.user!.id,
+          req.user!.organizationId,
+          false,
+          {
+            locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+            locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+            livenessScore: livenessResult.livenessScore,
+            deviceInfo,
+            failureReason: `Face verification service error: ${error.message}`,
+            metadata: { action }
+          }
+        );
+        
         console.error("Face verification error:", error);
-        res.status(500).json({
+        return res.status(500).json({
           verified: false,
-          message: "Face verification service unavailable"
+          message: "Face verification service unavailable",
+          canUsePin: req.user.pinEnabled
         });
       }
     } catch (error) {
       console.error("Face verification error:", error);
-      res.status(500).json({ message: "Face verification failed" });
+      return res.status(500).json({ 
+        message: "Face verification failed",
+        canUsePin: req.user?.pinEnabled || false
+      });
+    }
+  });
+
+  // PIN Authentication endpoints
+  app.post("/api/setup-pin", 
+    requireAuth, 
+    createRateLimitMiddleware('pinSetup'), 
+    async (req, res) => {
+    try {
+      const validation = setupPinSchema.safeParse(req.body);
+      
+      if (!validation.success) {
+        return res.status(400).json({
+          message: "Invalid PIN format",
+          errors: validation.error.errors
+        });
+      }
+
+      const { pin } = validation.data;
+      const hashedPin = await hashPassword(pin);
+      
+      await storage.updateUserPin(req.user!.id, hashedPin);
+      
+      res.json({ 
+        message: "PIN set up successfully",
+        pinEnabled: true
+      });
+    } catch (error) {
+      console.error("PIN setup error:", error);
+      res.status(500).json({ message: "Failed to set up PIN" });
+    }
+  });
+
+  app.post("/api/verify-pin", 
+    requireAuth, 
+    createAuthRateLimitMiddleware('pinVerification'), 
+    async (req, res) => {
+    try {
+      const { pin, location, userLocation, action } = req.body;
+      const finalLocation = location || userLocation;
+      const deviceInfo = AuditLogger.extractDeviceInfo(req);
+      
+      const validation = verifyPinSchema.safeParse({ pin });
+      
+      if (!validation.success) {
+        await AuditLogger.logPinVerification(
+          req.user!.id,
+          req.user!.organizationId,
+          false,
+          {
+            deviceInfo,
+            failureReason: "Invalid PIN format",
+            metadata: { action }
+          }
+        );
+        
+        return res.status(400).json({
+          message: "Invalid PIN format",
+          errors: validation.error.errors
+        });
+      }
+
+      if (!req.user!.pinEnabled || !req.user!.pinHash) {
+        await AuditLogger.logPinVerification(
+          req.user!.id,
+          req.user!.organizationId,
+          false,
+          {
+            deviceInfo,
+            failureReason: "PIN not enabled for user",
+            metadata: { action }
+          }
+        );
+        
+        return res.status(400).json({
+          message: "PIN authentication not enabled for your account"
+        });
+      }
+
+      const isValidPin = await comparePasswords(pin, req.user!.pinHash);
+      
+      if (!isValidPin) {
+        await AuditLogger.logPinVerification(
+          req.user!.id,
+          req.user!.organizationId,
+          false,
+          {
+            deviceInfo,
+            failureReason: "Invalid PIN provided",
+            metadata: { action }
+          }
+        );
+        
+        return res.status(400).json({
+          message: "Invalid PIN. Please try again.",
+          verified: false
+        });
+      }
+
+      // Log successful PIN verification
+      await AuditLogger.logPinVerification(
+        req.user!.id,
+        req.user!.organizationId,
+        true,
+        {
+          locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+          locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+          deviceInfo,
+          metadata: { action }
+        }
+      );
+
+      // Update last PIN used timestamp
+      await db.update(users)
+        .set({ lastPinUsed: new Date() })
+        .where(eq(users.id, req.user!.id));
+
+      // Create attendance record based on action
+      let attendanceRecord;
+      if (action === 'out') {
+        const today = new Date().toISOString().split('T')[0];
+        const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
+        
+        if (!todayRecord || todayRecord.clockOutTime) {
+          return res.status(400).json({
+            verified: false,
+            message: "No active clock-in found for today or already clocked out."
+          });
+        }
+        
+        attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, {
+          clockOutTime: new Date(),
+        });
+      } else {
+        attendanceRecord = await storage.createAttendanceRecord({
+          userId: req.user.id,
+          organizationId: req.user.organizationId,
+          clockInTime: new Date(),
+          date: new Date().toISOString().split('T')[0],
+          checkInMethod: 'pin'
+        });
+      }
+
+      res.json({
+        verified: true,
+        action: action || 'in',
+        message: `PIN verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`,
+        attendance: attendanceRecord,
+        method: 'pin'
+      });
+    } catch (error) {
+      console.error("PIN verification error:", error);
+      res.status(500).json({ message: "PIN verification failed" });
+    }
+  });
+
+  // Audit logging endpoints for managers/admins
+  app.get("/api/audit-logs", requireAuth, async (req, res) => {
+    try {
+      if (!['manager', 'admin'].includes(req.user!.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const { userId, limit = 50, offset = 0, verificationType, success, startDate, endDate } = req.query;
+      
+      const logs = await AuditLogger.getOrganizationAuditLogs(
+        req.user!.organizationId,
+        parseInt(limit as string),
+        parseInt(offset as string),
+        {
+          userId: userId ? parseInt(userId as string) : undefined,
+          verificationType: verificationType as 'face' | 'pin' | undefined,
+          success: success ? success === 'true' : undefined,
+          startDate: startDate ? new Date(startDate as string) : undefined,
+          endDate: endDate ? new Date(endDate as string) : undefined
+        }
+      );
+
+      res.json({ logs });
+    } catch (error) {
+      console.error("Get audit logs error:", error);
+      res.status(500).json({ message: "Failed to retrieve audit logs" });
+    }
+  });
+
+  app.get("/api/audit-logs/:userId", requireAuth, async (req, res) => {
+    try {
+      if (!['manager', 'admin'].includes(req.user!.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const { userId } = req.params;
+      const { limit = 50, offset = 0 } = req.query;
+      
+      const logs = await AuditLogger.getUserAuditLogs(
+        parseInt(userId),
+        req.user!.organizationId,
+        parseInt(limit as string),
+        parseInt(offset as string)
+      );
+
+      res.json({ logs });
+    } catch (error) {
+      console.error("Get user audit logs error:", error);
+      res.status(500).json({ message: "Failed to retrieve user audit logs" });
+    }
+  });
+
+  app.get("/api/security-alerts", requireAuth, async (req, res) => {
+    try {
+      if (!['manager', 'admin'].includes(req.user!.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const alerts = await AuditLogger.generateSecurityAlerts(req.user!.organizationId);
+      
+      res.json({ alerts });
+    } catch (error) {
+      console.error("Get security alerts error:", error);
+      res.status(500).json({ message: "Failed to retrieve security alerts" });
+    }
+  });
+
+  // Anomaly detection endpoints
+  app.get("/api/anomalies", requireAuth, async (req, res) => {
+    try {
+      if (!['manager', 'admin'].includes(req.user!.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const { hours = '24' } = req.query;
+      const anomalies = await AnomalyDetection.runAnomalyDetection(req.user!.organizationId);
+      
+      res.json({ anomalies });
+    } catch (error) {
+      console.error("Get anomalies error:", error);
+      res.status(500).json({ message: "Failed to retrieve anomalies" });
+    }
+  });
+
+  app.get("/api/security-metrics", requireAuth, async (req, res) => {
+    try {
+      if (!['manager', 'admin'].includes(req.user!.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const metrics = await AnomalyDetection.generateSecurityMetrics(req.user!.organizationId);
+      
+      res.json({ metrics });
+    } catch (error) {
+      console.error("Get security metrics error:", error);
+      res.status(500).json({ message: "Failed to retrieve security metrics" });
+    }
+  });
+
+  // Device management endpoints
+  app.get("/api/devices", requireAuth, async (req, res) => {
+    try {
+      const devices = await DeviceFingerprinting.getUserDevices(req.user!.id);
+      
+      res.json({ devices });
+    } catch (error) {
+      console.error("Get user devices error:", error);
+      res.status(500).json({ message: "Failed to retrieve devices" });
+    }
+  });
+
+  app.post("/api/devices/:fingerprint/trust", requireAuth, async (req, res) => {
+    try {
+      const { fingerprint } = req.params;
+      
+      const success = await DeviceFingerprinting.trustDevice(req.user!.id, fingerprint);
+      
+      if (success) {
+        res.json({ message: "Device trusted successfully" });
+      } else {
+        res.status(404).json({ message: "Device not found" });
+      }
+    } catch (error) {
+      console.error("Trust device error:", error);
+      res.status(500).json({ message: "Failed to trust device" });
+    }
+  });
+
+  app.delete("/api/devices/:fingerprint", requireAuth, async (req, res) => {
+    try {
+      const { fingerprint } = req.params;
+      
+      const success = await DeviceFingerprinting.removeDevice(req.user!.id, fingerprint);
+      
+      if (success) {
+        res.json({ message: "Device removed successfully" });
+      } else {
+        res.status(404).json({ message: "Device not found" });
+      }
+    } catch (error) {
+      console.error("Remove device error:", error);
+      res.status(500).json({ message: "Failed to remove device" });
+    }
+  });
+
+  app.get("/api/device-security-summary", requireAuth, async (req, res) => {
+    try {
+      const summary = await DeviceFingerprinting.getDeviceSecuritySummary(req.user!.id);
+      
+      res.json({ summary });
+    } catch (error) {
+      console.error("Get device security summary error:", error);
+      res.status(500).json({ message: "Failed to retrieve device security summary" });
     }
   });
 

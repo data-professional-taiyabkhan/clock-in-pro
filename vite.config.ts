@@ -30,6 +30,9 @@ export default defineConfig({
       "react-dom": path.resolve(__dirname, "node_modules", "react-dom"),
     },
   },
+  define: {
+    global: 'globalThis',
+  },
   root: path.resolve(__dirname, "client"),
   build: {
     outDir: path.resolve(__dirname, "dist/public"),

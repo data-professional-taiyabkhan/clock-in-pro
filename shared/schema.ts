@@ -7,6 +7,7 @@ import {
   integer,
   boolean,
   json,
+  real,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -38,7 +39,11 @@ export const users = pgTable("users", {
   role: varchar("role").notNull().default("employee"), // employee, manager, admin, developer
   organizationId: integer("organization_id").references(() => organizations.id),
   faceImageUrl: varchar("face_image_url"), // Simple face image for recognition
-  faceEmbedding: json("face_embedding"), // Face embedding for recognition
+  faceEmbedding: json("face_embedding"), // Face embedding for recognition (backup)
+  faceEmbeddingVector: text("face_embedding_vector"), // pgvector face embedding for similarity search
+  pinHash: varchar("pin_hash"), // Hashed PIN for backup authentication
+  pinEnabled: boolean("pin_enabled").default(false),
+  lastPinUsed: timestamp("last_pin_used"),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -66,11 +71,29 @@ export const attendanceRecords = pgTable("attendance_records", {
   clockOutTime: timestamp("clock_out_time"),
   date: varchar("date").notNull(),
   locationId: integer("location_id").references(() => locations.id),
-  checkInMethod: varchar("check_in_method").default("face"), // face, manual
+  checkInMethod: varchar("check_in_method").default("face"), // face, manual, pin
   manuallyApprovedBy: integer("manually_approved_by").references(() => users.id),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Audit logging for all verification attempts
+export const attendanceVerificationLogs = pgTable("attendance_verification_logs", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id").notNull().references(() => organizations.id),
+  userId: integer("user_id").notNull().references(() => users.id),
+  attemptTime: timestamp("attempt_time").defaultNow(),
+  verificationType: varchar("verification_type").notNull(), // 'face' | 'pin'
+  success: boolean("success").notNull(),
+  faceConfidence: real("face_confidence"), // 0-100 score
+  livenessScore: real("liveness_score"), // 0-100 score
+  locationLatitude: real("location_latitude"),
+  locationLongitude: real("location_longitude"),
+  deviceInfo: text("device_info"), // User agent, IP, etc.
+  failureReason: text("failure_reason"),
+  metadata: json("metadata"), // Additional verification details
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const employeeInvitations = pgTable("employee_invitations", {
@@ -99,6 +122,7 @@ export const organizationsRelations = relations(organizations, ({ many, one }) =
   users: many(users),
   locations: many(locations),
   attendanceRecords: many(attendanceRecords),
+  attendanceVerificationLogs: many(attendanceVerificationLogs),
   employeeInvitations: many(employeeInvitations),
   employeeLocations: many(employeeLocations),
   admin: one(users, {
@@ -113,6 +137,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
     references: [organizations.id],
   }),
   attendanceRecords: many(attendanceRecords),
+  attendanceVerificationLogs: many(attendanceVerificationLogs),
   approvedRecords: many(attendanceRecords, {
     relationName: "approvedBy"
   }),
@@ -180,6 +205,17 @@ export const employeeLocationsRelations = relations(employeeLocations, ({ one })
   }),
 }));
 
+export const attendanceVerificationLogsRelations = relations(attendanceVerificationLogs, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [attendanceVerificationLogs.organizationId],
+    references: [organizations.id],
+  }),
+  user: one(users, {
+    fields: [attendanceVerificationLogs.userId],
+    references: [users.id],
+  }),
+}));
+
 export const insertOrganizationSchema = createInsertSchema(organizations).omit({
   id: true,
   createdAt: true,
@@ -218,6 +254,11 @@ export const insertEmployeeLocationSchema = createInsertSchema(employeeLocations
   createdAt: true,
 });
 
+export const insertAttendanceVerificationLogSchema = createInsertSchema(attendanceVerificationLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Login schemas
 export const loginSchema = z.object({
   email: z.string().email(),
@@ -242,6 +283,20 @@ export const changePasswordSchema = z.object({
   path: ["confirmPassword"],
 });
 
+// PIN setup schema
+export const setupPinSchema = z.object({
+  pin: z.string().min(4).max(6).regex(/^\d+$/, "PIN must contain only digits"),
+  confirmPin: z.string().min(4).max(6),
+}).refine(data => data.pin === data.confirmPin, {
+  message: "PINs don't match",
+  path: ["confirmPin"],
+});
+
+// PIN verification schema
+export const verifyPinSchema = z.object({
+  pin: z.string().min(4).max(6).regex(/^\d+$/, "PIN must contain only digits"),
+});
+
 export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
 export type User = typeof users.$inferSelect;
@@ -254,5 +309,9 @@ export type EmployeeInvitation = typeof employeeInvitations.$inferSelect;
 export type InsertInvitation = z.infer<typeof insertInvitationSchema>;
 export type EmployeeLocation = typeof employeeLocations.$inferSelect;
 export type InsertEmployeeLocation = z.infer<typeof insertEmployeeLocationSchema>;
+export type AttendanceVerificationLog = typeof attendanceVerificationLogs.$inferSelect;
+export type InsertAttendanceVerificationLog = z.infer<typeof insertAttendanceVerificationLogSchema>;
 export type LoginData = z.infer<typeof loginSchema>;
 export type RegisterData = z.infer<typeof registerSchema>;
+export type SetupPinData = z.infer<typeof setupPinSchema>;
+export type VerifyPinData = z.infer<typeof verifyPinSchema>;

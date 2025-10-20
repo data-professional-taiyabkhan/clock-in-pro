@@ -5,10 +5,16 @@
   "license": "MIT",
   "scripts": {
     "dev": "cross-env NODE_ENV=development tsx server/index.ts",
-    "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
+    "build": "vite build && node esbuild.config.js",
     "start": "cross-env NODE_ENV=production node dist/index.js",
     "check": "tsc",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "migrate:security": "node scripts/migrate-security-enhancements.js",
+    "populate:embeddings": "node scripts/simple-populate-embeddings.js",
+    "test:db": "node scripts/simple-db-test.js",
+    "test:face": "node scripts/test-face-recognition.js",
+    "test:liveness": "python scripts/test_liveness_detection.py",
+    "test:security": "node scripts/test-security-features.js"
   },
   "dependencies": {
     "@bubblewrap/cli": "^1.23.0",

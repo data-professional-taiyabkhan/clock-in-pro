@@ -71,14 +71,25 @@ export default function SecurityTestPage() {
 
   const handleFaceCapture = async (faceData: string) => {
     try {
+      let payload: any = { action: "in", location: { latitude: "51.43", longitude: "-0.551" } };
+      try {
+        const parsed = JSON.parse(faceData);
+        if (parsed && typeof parsed === 'object' && Array.isArray(parsed.descriptor)) {
+          payload = { ...payload, imageData: parsed.imageData, descriptor: parsed.descriptor };
+        } else if (typeof faceData === 'string' && faceData.startsWith('data:image/')) {
+          payload = { ...payload, imageData: faceData };
+        } else {
+          // best-effort
+          payload = { ...payload, imageData: faceData };
+        }
+      } catch {
+        payload = { ...payload, imageData: faceData };
+      }
+
       const response = await fetch("/api/verify-face", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          imageData: faceData,
-          action: "in",
-          location: { latitude: "51.43", longitude: "-0.551" }, // Mock location
-        }),
+        body: JSON.stringify(payload),
       });
 
       const result = await response.json();
@@ -99,7 +110,7 @@ export default function SecurityTestPage() {
       if (result.verified) {
         toast({
           title: "Face Verification SUCCESS",
-          description: `Distance: ${result.distance?.toFixed(4)} - ${result.securityLevel}`,
+          description: `Distance: ${result.distance?.toFixed(4)}`,
         });
       } else {
         toast({
@@ -205,7 +216,7 @@ export default function SecurityTestPage() {
           <CardHeader>
             <CardTitle>Capture Face for Verification</CardTitle>
             <CardDescription>
-              Use your actual face to test if the system correctly accepts/rejects you on this account
+              Use your actual face to test the verification system
             </CardDescription>
           </CardHeader>
           <CardContent>
