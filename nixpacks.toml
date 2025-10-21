@@ -8,6 +8,7 @@ aptPkgs = [
   "python3",
   "python3-pip",
   "python3-venv",
+  "python3-dev",
   "build-essential",
   "g++",
   "gcc",
@@ -19,7 +20,11 @@ aptPkgs = [
   "libglib2.0-0",
   "libsm6",
   "libxext6",
-  "libxrender1"
+  "libxrender1",
+  "libgomp1",
+  "libgcc-s1",
+  "libc6-dev",
+  "linux-libc-dev"
 ]
 
 # Disable Caddy phase - we use Express to serve the app
@@ -34,8 +39,9 @@ cmds = [
 [phases.build]
 cmds = [
   "/usr/bin/python3 -m venv --copies /app/.venv",
-  "/app/.venv/bin/pip install --no-cache-dir --upgrade pip",
-  "/app/.venv/bin/pip install --no-cache-dir -r python-requirements.txt",
+  "/app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel",
+  "export CC=gcc && export CXX=g++ && export PATH=/usr/bin:$PATH && /app/.venv/bin/pip install --no-cache-dir numpy",
+  "export CC=gcc && export CXX=g++ && export PATH=/usr/bin:$PATH && /app/.venv/bin/pip install --no-cache-dir -r python-requirements.txt",
   "npm run build"
 ]
 
@@ -45,4 +51,7 @@ cmd = "npm start"
 [variables]
 PYTHON_KEYRING_BACKEND = "keyring.backends.null.Keyring"
 PYTHONUNBUFFERED = "1"
-PATH = "/app/.venv/bin:$PATH"
+PATH = "/usr/bin:/app/.venv/bin:$PATH"
+CC = "gcc"
+CXX = "g++"
+CPP = "cpp"
