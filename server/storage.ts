@@ -44,9 +44,9 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   updateUserFaceImage(userId: number, faceImageUrl: string): Promise<User>;
   updateUserFaceEmbedding(userId: number, faceImageUrl: string | null | undefined, faceEmbedding: number[]): Promise<User>;
-  updateUserFaceEmbeddingVector(userId: number, faceEmbeddingVector: string): Promise<User>;
+  // updateUserFaceEmbeddingVector(userId: number, faceEmbeddingVector: string): Promise<User>; // temporarily disabled
   updateUserPassword(userId: number, hashedPassword: string): Promise<User>;
-  updateUserPin(userId: number, pinHash: string): Promise<User>;
+  // updateUserPin(userId: number, pinHash: string): Promise<User>; // temporarily disabled
   getAllEmployees(organizationId?: number): Promise<User[]>;
   getAllUsers(organizationId?: number): Promise<User[]>;
   deleteUser(id: number): Promise<void>;
@@ -555,30 +555,30 @@ export class DatabaseStorage implements IStorage {
 
   // New methods for enhanced security features
 
-  async updateUserFaceEmbeddingVector(userId: number, faceEmbeddingVector: string): Promise<User> {
-    const [user] = await db
-      .update(users)
-      .set({ 
-        faceEmbeddingVector,
-        updatedAt: new Date()
-      })
-      .where(eq(users.id, userId))
-      .returning();
-    return user;
-  }
+  // async updateUserFaceEmbeddingVector(userId: number, faceEmbeddingVector: string): Promise<User> {
+  //   const [user] = await db
+  //     .update(users)
+  //     .set({ 
+  //       faceEmbeddingVector,
+  //       updatedAt: new Date()
+  //     })
+  //     .where(eq(users.id, userId))
+  //     .returning();
+  //   return user;
+  // }
 
-  async updateUserPin(userId: number, pinHash: string): Promise<User> {
-    const [user] = await db
-      .update(users)
-      .set({ 
-        pinHash,
-        pinEnabled: true,
-        updatedAt: new Date()
-      })
-      .where(eq(users.id, userId))
-      .returning();
-    return user;
-  }
+  // async updateUserPin(userId: number, pinHash: string): Promise<User> {
+  //   const [user] = await db
+  //     .update(users)
+  //     .set({ 
+  //       pinHash,
+  //       pinEnabled: true,
+  //       updatedAt: new Date()
+  //     })
+  //     .where(eq(users.id, userId))
+  //     .returning();
+  //   return user;
+  // }
 
   // Audit logging methods
   async createVerificationLog(log: InsertAttendanceVerificationLog): Promise<AttendanceVerificationLog> {

@@ -40,10 +40,10 @@ export const users = pgTable("users", {
   organizationId: integer("organization_id").references(() => organizations.id),
   faceImageUrl: varchar("face_image_url"), // Simple face image for recognition
   faceEmbedding: json("face_embedding"), // Face embedding for recognition (backup)
-  faceEmbeddingVector: text("face_embedding_vector"), // pgvector face embedding for similarity search
-  pinHash: varchar("pin_hash"), // Hashed PIN for backup authentication
-  pinEnabled: boolean("pin_enabled").default(false),
-  lastPinUsed: timestamp("last_pin_used"),
+  // faceEmbeddingVector: text("face_embedding_vector"), // pgvector face embedding for similarity search - temporarily disabled
+  // pinHash: varchar("pin_hash"), // Hashed PIN for backup authentication - temporarily disabled
+  // pinEnabled: boolean("pin_enabled").default(false), // temporarily disabled
+  // lastPinUsed: timestamp("last_pin_used"), // temporarily disabled
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
