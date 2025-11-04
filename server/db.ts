@@ -52,14 +52,21 @@ if (isNeonDatabase) {
 } else {
   // Use standard PostgreSQL driver for local development
   console.log('Using standard PostgreSQL database...');
-  const { Pool } = await import('pg');
+  const pkg = await import('pg');
+  const { Pool } = pkg.default || pkg;
   const { drizzle } = await import('drizzle-orm/node-postgres');
 
+  // Remove sslmode=require from connection string if present - we set SSL in config
+  const connectionString = (process.env.DATABASE_URL || '').replace(/\?sslmode=require$/, '');
+
   pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString,
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
+    ssl: {
+      rejectUnauthorized: false // AWS RDS self-signed certificates
+    }
   });
 
   pool.on('error', (err: any) => {
@@ -70,7 +77,7 @@ if (isNeonDatabase) {
     console.log('PostgreSQL database connected successfully');
   });
 
-  db = drizzle(pool, { schema });
+  db = drizzle({ client: pool, schema });
 }
 
 export { db, pool };

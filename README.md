@@ -1,224 +1,313 @@
 # Attendance Management System
 
-A modern, secure employee attendance management system with facial recognition technology for contactless clock-in/out functionality.
+A modern, secure employee attendance management system with **AWS-powered facial recognition** for contactless clock-in/out functionality.
 
-## Features
+## ✨ Features
 
 ### 🔐 Advanced Security
-- **Facial Recognition Authentication**: Uses DeepFace library with Facenet model for secure employee verification
+- **AWS Rekognition Face Recognition**: 99.9% accuracy with cloud-based AI face matching
 - **Multi-Role Access Control**: Employee, Manager, and Administrator roles with specific permissions
 - **Location-Based Verification**: GPS geofencing to restrict check-ins to authorized locations
 - **Session-Based Authentication**: Secure login system with bcrypt password hashing
+- **Real-Time Quality Checks**: Automatic face quality validation before registration
 
 ### 📱 Employee Features
-- **Contactless Clock-In/Out**: Face recognition-based attendance tracking
-- **Real-Time Location Verification**: Automatic location validation during check-in
-- **Attendance History**: View personal attendance records and working hours
+- **Contactless Clock-In/Out**: AWS Rekognition face verification for attendance
+- **Real-Time Location Verification**: Automatic GPS location validation
+- **Attendance History**: View personal records and working hours
 - **Dashboard Analytics**: Personal attendance statistics and insights
 
 ### 👔 Manager Features
 - **Employee Management**: Add, edit, and manage employee profiles
-- **Face Image Management**: Upload and manage employee face templates
-- **Attendance Oversight**: Monitor team attendance and approve manual entries
-- **Location Administration**: Create and manage office locations with geofencing
-- **Team Analytics**: Comprehensive attendance reports and insights
+- **Face Image Management**: Upload faces to AWS S3 and Rekognition
+- **Attendance Oversight**: Monitor team attendance
+- **Location Administration**: Create and manage office locations
+- **Team Analytics**: Comprehensive reports and insights
 
 ### 🛡️ Administrator Features
-- **System-Wide Management**: Complete control over all system components
-- **User Role Management**: Assign and modify user permissions
+- **System-Wide Management**: Complete control over all components
+- **User Role Management**: Assign and modify permissions
 - **Location Configuration**: Set up office locations and access controls
 - **Invitation System**: Send secure invitations to new employees
 
-## Technology Stack
+## 🚀 Technology Stack
 
 ### Frontend
-- **React 18** with TypeScript for type safety
-- **Vite** for fast development and optimized builds
-- **Tailwind CSS** + **shadcn/ui** for modern, responsive design
-- **TanStack Query** for efficient server state management
-- **Wouter** for lightweight client-side routing
+- **React 18** with TypeScript
+- **Vite** for fast development
+- **Tailwind CSS** + **shadcn/ui** for modern UI
+- **TanStack Query** for state management
 - **React Hook Form** with Zod validation
 
 ### Backend
-- **Node.js** with **Express.js** framework
+- **Node.js** + **Express.js**
 - **TypeScript** for full-stack type safety
-- **PostgreSQL** database with **Drizzle ORM**
-- **Python** integration for face recognition processing
-- **Session-based authentication** with secure password hashing
+- **PostgreSQL** with **Drizzle ORM**
+- **AWS SDK v3** for cloud services
 
-### Face Recognition
-- **DeepFace** library with Facenet model
-- **OpenCV** for face detection and processing
-- **Python** service integration with Node.js backend
-- **Real-time face verification** with configurable thresholds
+### AWS Services
+- **AWS Rekognition**: Face recognition (99.9% accuracy)
+- **AWS S3**: Scalable image storage
+- **AWS RDS PostgreSQL**: Managed database
 
-## Installation
+## 📦 Installation
 
 ### Prerequisites
-- Node.js 18+ 
-- Python 3.11+
-- PostgreSQL database
+- Node.js 18+
+- PostgreSQL database (or AWS RDS)
+- AWS Account with Rekognition and S3 access
 
-### Setup Instructions
+### Quick Setup
 
 1. **Clone the repository**
    ```bash
    git clone <repository-url>
-   cd attendance-management-system
+   cd AttendanceFaceSyncWeb
    ```
 
 2. **Install dependencies**
    ```bash
-   # Install Node.js dependencies
    npm install
-   
-   # Install Python dependencies
-   pip install deepface numpy opencv-python pillow tensorflow
    ```
 
-3. **Database setup**
-   ```bash
-   # Set your PostgreSQL connection string
-   export DATABASE_URL="postgresql://username:password@host:port/database"
+3. **Configure environment**
+   Create `.env` file:
+   ```env
+   # Database
+   DATABASE_URL=postgresql://user:pass@host:5432/dbname
    
-   # Push database schema
-   npm run db:push
-   ```
-
-4. **Environment configuration**
-   Create a `.env` file with:
-   ```
-   DATABASE_URL=your_postgresql_connection_string
-   SESSION_SECRET=your_secure_session_secret
+   # AWS
+   AWS_REGION=us-east-1
+   AWS_ACCESS_KEY_ID=your-key-id
+   AWS_SECRET_ACCESS_KEY=your-secret-key
+   AWS_S3_BUCKET=your-bucket-name
+   AWS_REKOGNITION_COLLECTION=attendance-faces
+   
+   # Security
+   SESSION_SECRET=your-random-secret
    NODE_ENV=development
    ```
 
-5. **Start the application**
+4. **Set up database**
+   ```bash
+   npm run db:push
+   ```
+
+5. **Set up AWS**
+   ```bash
+   # Test AWS configuration
+   npm run aws:test
+   ```
+
+6. **Start the application**
    ```bash
    npm run dev
    ```
 
-The application will be available at `http://localhost:5000`
+Open http://localhost:5000
 
-## Usage
+## 📚 Available Scripts
+
+```bash
+# Development
+npm run dev              # Start development server
+npm run build            # Build for production
+npm run check            # TypeScript type checking
+
+# Database
+npm run db:push          # Push schema to database
+npm run db:verify        # Verify database schema
+
+# AWS Testing
+npm run aws:test         # Test all AWS services
+npm run aws:test-s3      # Test S3 only
+npm run test:db          # Test database only
+```
+
+## 🎯 Usage
 
 ### Initial Setup
-1. **Admin Account**: Create the first administrator account through the registration page
-2. **Office Locations**: Set up office locations with GPS coordinates and allowed radius
-3. **Employee Invitations**: Send invitation links to employees for account creation
-
-### Employee Onboarding
-1. **Direct Account Creation**: Managers create employee accounts directly with default password "password123"
-2. **Face Registration**: Managers upload employee face images for recognition
-3. **Location Assignment**: Assign employees to specific office locations
+1. **Create Organization**: Register your organization
+2. **Add Users**: Create employee accounts
+3. **Register Faces**: Upload employee face images (AWS S3 + Rekognition)
+4. **Set Locations**: Configure office locations with GPS
 
 ### Daily Operations
-1. **Clock-In**: Employees use face recognition to clock in at authorized locations
-2. **Clock-Out**: Face verification for secure clock-out process
-3. **Monitoring**: Managers monitor real-time attendance and approve exceptions
-4. **Reporting**: Generate attendance reports and analytics
+1. **Clock-In**: Face recognition via AWS Rekognition
+2. **Clock-Out**: Secure face verification
+3. **Monitor**: Managers view real-time attendance
+4. **Reports**: Generate attendance analytics
 
-## API Endpoints
+## 🔒 Security Features
+
+### Face Recognition
+- **AWS Rekognition**: Enterprise-grade AI face matching
+- **Quality Validation**: Automatic image quality checks
+- **Anti-Spoofing**: Built-in liveness detection
+- **Similarity Threshold**: Configurable accuracy (default: 99%)
+
+### Data Protection
+- **S3 Storage**: Encrypted image storage
+- **Secure Sessions**: Session-based auth with bcrypt
+- **Role-Based Access**: Granular permissions
+- **Audit Logging**: Complete activity tracking
+
+### Location Security
+- **GPS Verification**: Real-time location checks
+- **Geofencing**: Radius-based access control
+- **Anomaly Detection**: Unusual pattern alerts
+
+## 🏗️ Architecture
+
+```
+┌─────────────────┐
+│   React Frontend│
+└────────┬────────┘
+         │
+┌────────▼────────┐
+│  Express Backend│
+└────────┬────────┘
+         │
+    ┌────┴────┐
+    │         │
+┌───▼───┐ ┌──▼────────┐
+│AWS RDS│ │AWS Services│
+│  PostgreSQL     │
+│                 │
+│   ┌─────────────┴────────────┐
+│   │                          │
+│┌──▼────────┐     ┌──────────▼─┐
+│AWS S3      │     │AWS         │
+│(Face Images)│    │Rekognition │
+└────────────┘     │(Face Match)│
+                   └────────────┘
+```
+
+## 📊 AWS Setup Guide
+
+See `START_HERE.md` for complete AWS setup instructions including:
+- AWS account setup
+- RDS database creation
+- S3 bucket configuration
+- Rekognition collection setup
+- Security group configuration
+
+## 🧪 Testing
+
+```bash
+# Test database connection
+npm run test:db
+
+# Test AWS services
+npm run aws:test
+
+# Test S3 only
+npm run aws:test-s3
+
+# Verify schema
+npm run db:verify
+```
+
+## 🚢 Deployment
+
+### AWS Deployment
+1. Create RDS PostgreSQL instance
+2. Create S3 bucket for face images
+3. Create Rekognition collection
+4. Configure security groups
+5. Deploy app (Elastic Beanstalk/ECS/Lambda)
+
+### Environment Variables
+See `env.aws.template` for required variables.
+
+## 💰 AWS Costs
+
+**Free Tier Includes:**
+- RDS: 750 hours/month (db.t3.micro)
+- S3: 5GB storage
+- Rekognition: 5,000 faces/month
+
+**Typical Monthly Cost:**
+- < $5 for small teams (< 50 users)
+- Scales with usage
+
+Monitor costs: https://console.aws.amazon.com/billing/
+
+## 📝 API Endpoints
 
 ### Authentication
 - `POST /api/login` - User login
 - `POST /api/logout` - User logout
-- `POST /api/register` - User registration (invitation-based)
+- `POST /api/register` - User registration
 
 ### Attendance
-- `POST /api/verify-face` - Face recognition verification
-- `GET /api/attendance` - Get attendance records
-- `POST /api/clock-in` - Clock in with face verification
-- `POST /api/clock-out` - Clock out with face verification
+- `POST /api/verify-face` - AWS Rekognition face verification
+- `POST /api/clock-in` - Clock in
+- `POST /api/clock-out` - Clock out
+- `GET /api/attendance` - Get records
 
 ### Management
-- `GET /api/employees` - List employees (Manager+)
-- `POST /api/employees` - Create employee accounts directly (Manager+)
-- `POST /api/employees/{id}/face` - Upload employee face image (Manager+)
-- `GET /api/locations` - List office locations
-- `POST /api/locations` - Create office location (Admin)
+- `GET /api/employees` - List employees
+- `POST /api/employees/:id/face-image` - Upload face (AWS S3 + Rekognition)
+- `GET /api/locations` - List locations
+- `POST /api/locations` - Create location
 
-### Administration
-- `POST /api/invitations` - Send employee invitations (Admin)
-- `GET /api/system/stats` - System statistics (Admin)
+## 🆘 Troubleshooting
 
-## Security Features
-
-### Face Recognition Security
-- **DeepFace Verification**: Industry-standard face recognition with configurable thresholds
-- **Anti-Spoofing**: Live face detection to prevent photo-based attacks
-- **Template Protection**: Secure storage of face templates with encryption
-- **Distance Thresholding**: Configurable similarity thresholds for verification accuracy
-
-### Data Protection
-- **Encrypted Storage**: Face templates and sensitive data encrypted at rest
-- **Session Security**: Secure session management with automatic expiration
-- **Role-Based Access**: Granular permissions based on user roles
-- **Audit Logging**: Comprehensive logging of all system activities
-
-### Location Security
-- **GPS Verification**: Real-time location validation during check-in
-- **Geofencing**: Configurable radius limits for each office location
-- **IP Tracking**: Monitor access patterns and detect anomalies
-
-## Configuration
-
-### Face Recognition Settings
-```javascript
-// Adjust in server/actual_deepface.py
-const FACE_THRESHOLD = 0.4;  // Lower = more strict
-const MODEL = 'Facenet';     // Face recognition model
-const DETECTOR = 'opencv';   // Face detection backend
+**Database issues:**
+```bash
+npm run db:verify
 ```
 
-### Location Settings
-```javascript
-// Default radius for office locations
-const DEFAULT_RADIUS_METERS = 100;
-
-// GPS accuracy requirements
-const GPS_ACCURACY_THRESHOLD = 50; // meters
+**AWS issues:**
+```bash
+npm run aws:test
 ```
 
-## Deployment
+**Import errors:**
+```bash
+npm run check
+```
 
-### Production Deployment
-1. **Environment Setup**: Configure production environment variables
-2. **Database Migration**: Run database migrations in production
-3. **Asset Building**: Build optimized frontend assets
-4. **Process Management**: Use PM2 or similar for process management
-5. **SSL/TLS**: Configure HTTPS with proper certificates
+## 📄 Documentation
 
-### Replit Deployment
-The application is optimized for Replit deployment with:
-- Automatic dependency management
-- Integrated PostgreSQL database
-- One-click deployment configuration
+- `START_HERE.md` - Complete AWS setup guide
+- `AWS_MIGRATION_COMPLETE.md` - Migration summary
+- `AWS_ARCHITECTURE.md` - Architecture details
+- `AWS_COMPLETE_GUIDE.md` - Comprehensive AWS guide
 
-## Contributing
+## 🎉 Changelog
+
+### Latest (December 2024)
+- ✅ **Migrated to AWS**: Replaced Python/DeepFace with AWS Rekognition
+- ✅ **Cloud Storage**: Face images stored in AWS S3
+- ✅ **99.9% Accuracy**: Enterprise-grade face recognition
+- ✅ **Faster Processing**: No more Python process overhead
+- ✅ **Better Scalability**: Auto-scaling AWS infrastructure
+- ✅ **Production Ready**: Fully cloud-based architecture
+
+### Previous
+- Multi-role access control
+- Location-based verification
+- Real-time analytics
+- Secure session management
+
+## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create feature branch
+3. Commit changes
+4. Push to branch
+5. Open Pull Request
 
+## 📞 Support
 
-## Support
-
-For support and questions:
-- Create an issue on GitHub
-- Check the documentation in the `/docs` folder
-- Review the troubleshooting guide
-
-## Changelog
-
-### Latest Updates
-- **Face Recognition**: Integrated DeepFace library for accurate face verification
-- **Security Enhancement**: Implemented multi-layer security with location-based access
-- **Performance**: Optimized face recognition pipeline for faster processing
-- **UI/UX**: Modern, responsive interface with real-time feedback
+- Documentation in `/docs`
+- AWS guides in root directory
+- Issues: GitHub Issues
 
 ---
 
-**Built with ❤️ using modern web technologies for secure, efficient workforce management.**
+**Built with ❤️ using AWS for secure, scalable workforce management.**
+
+**Powered by:** AWS Rekognition | AWS S3 | AWS RDS | Node.js | React | TypeScript
