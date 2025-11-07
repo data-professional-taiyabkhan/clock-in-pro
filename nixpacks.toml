@@ -1,8 +1,8 @@
 # Nixpacks configuration for Railway
-# Only build Node.js, skip Python
+# Build Node.js application only
 
 [phases.setup]
-nixPkgs = ["nodejs-20_x"]
+nixPkgs = ["nodejs_20"]
 
 [phases.install]
 cmds = ["npm ci"]
