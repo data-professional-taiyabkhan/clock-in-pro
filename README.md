@@ -112,16 +112,12 @@ Open http://localhost:5000
 # Development
 npm run dev              # Start development server
 npm run build            # Build for production
+npm run start            # Start production server
 npm run check            # TypeScript type checking
 
 # Database
 npm run db:push          # Push schema to database
 npm run db:verify        # Verify database schema
-
-# AWS Testing
-npm run aws:test         # Test all AWS services
-npm run aws:test-s3      # Test S3 only
-npm run test:db          # Test database only
 ```
 
 ## 🎯 Usage
@@ -183,42 +179,44 @@ npm run test:db          # Test database only
                    └────────────┘
 ```
 
-## 📊 AWS Setup Guide
+## 📊 AWS Setup
 
-See `START_HERE.md` for complete AWS setup instructions including:
-- AWS account setup
-- RDS database creation
-- S3 bucket configuration
-- Rekognition collection setup
-- Security group configuration
+### 1. Create RDS PostgreSQL Database
+- Instance: db.t3.micro or larger
+- Enable public access (or configure VPC)
+- Note connection details for `DATABASE_URL`
 
-## 🧪 Testing
-
+### 2. Create S3 Bucket
 ```bash
-# Test database connection
-npm run test:db
+aws s3 mb s3://your-bucket-name --region your-region
+```
 
-# Test AWS services
-npm run aws:test
+### 3. Create Rekognition Collection
+```bash
+aws rekognition create-collection --collection-id attendance-faces --region your-region
+```
 
-# Test S3 only
-npm run aws:test-s3
-
-# Verify schema
+### 4. Verify Setup
+```bash
 npm run db:verify
 ```
 
 ## 🚢 Deployment
 
-### AWS Deployment
-1. Create RDS PostgreSQL instance
-2. Create S3 bucket for face images
-3. Create Rekognition collection
-4. Configure security groups
-5. Deploy app (Elastic Beanstalk/ECS/Lambda)
+### Deploy to Railway (Recommended)
+1. Push code to GitHub
+2. Connect repository to Railway  
+3. Add environment variables in Railway dashboard
+4. Deploy automatically on every push
 
-### Environment Variables
-See `env.aws.template` for required variables.
+### Deploy to Other Platforms
+- AWS App Runner
+- AWS ECS/Fargate
+- AWS EC2 with PM2
+
+Configuration files included:
+- `nixpacks.toml` - Railway/Nixpacks build config
+- `railway.json` - Railway deployment config
 
 ## 💰 AWS Costs
 
@@ -302,9 +300,8 @@ npm run check
 
 ## 📞 Support
 
-- Documentation in `/docs`
-- AWS guides in root directory
-- Issues: GitHub Issues
+- Issues: GitHub Issues  
+- AWS Documentation: https://docs.aws.amazon.com
 
 ---
 

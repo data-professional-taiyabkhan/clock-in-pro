@@ -1,57 +1,14 @@
-[phases.setup]
-nixPkgs = [
-  "nodejs_20",
-  "bash",
-  "coreutils"
-]
-aptPkgs = [
-  "python3",
-  "python3-pip",
-  "python3-venv",
-  "python3-dev",
-  "build-essential",
-  "g++",
-  "gcc",
-  "make",
-  "cmake",
-  "pkg-config",
-  "libstdc++6",
-  "libgl1",
-  "libglib2.0-0",
-  "libsm6",
-  "libxext6",
-  "libxrender1",
-  "libgomp1",
-  "libgcc-s1",
-  "libc6-dev",
-  "linux-libc-dev"
-]
+# Nixpacks configuration for Railway
+# Only build Node.js, skip Python
 
-# Disable Caddy phase - we use Express to serve the app
-[phases.caddy]
-cmds = []
+[phases.setup]
+nixPkgs = ["nodejs-20_x"]
 
 [phases.install]
-cmds = [
-  "npm install --legacy-peer-deps"
-]
+cmds = ["npm ci"]
 
 [phases.build]
-cmds = [
-  "/usr/bin/python3 -m venv --copies /app/.venv",
-  "/app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel",
-  "export CC=gcc && export CXX=g++ && export PATH=/usr/bin:$PATH && /app/.venv/bin/pip install --no-cache-dir numpy",
-  "export CC=gcc && export CXX=g++ && export PATH=/usr/bin:$PATH && /app/.venv/bin/pip install --no-cache-dir -r python-requirements.txt",
-  "npm run build"
-]
+cmds = ["npm run build"]
 
 [start]
 cmd = "npm start"
-
-[variables]
-PYTHON_KEYRING_BACKEND = "keyring.backends.null.Keyring"
-PYTHONUNBUFFERED = "1"
-PATH = "/usr/bin:/app/.venv/bin:$PATH"
-CC = "gcc"
-CXX = "g++"
-CPP = "cpp"
