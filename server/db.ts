@@ -63,7 +63,9 @@ if (isNeonDatabase) {
     connectionString,
     max: 10,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
+    connectionTimeoutMillis: 30000, // Increased for Railway cross-region connection
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000,
     ssl: {
       rejectUnauthorized: false // AWS RDS self-signed certificates
     }
