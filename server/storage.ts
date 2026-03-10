@@ -6,6 +6,10 @@ import {
   employeeLocations,
   organizations,
   attendanceVerificationLogs,
+  billingCustomers,
+  subscriptions,
+  webhookEvents,
+  employeeConsents,
   type User,
   type InsertUser,
   type AttendanceRecord,
@@ -20,6 +24,14 @@ import {
   type InsertOrganization,
   type AttendanceVerificationLog,
   type InsertAttendanceVerificationLog,
+  type BillingCustomer,
+  type InsertBillingCustomer,
+  type Subscription,
+  type InsertSubscription,
+  type WebhookEvent,
+  type InsertWebhookEvent,
+  type EmployeeConsent,
+  type InsertEmployeeConsent,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -32,11 +44,12 @@ export interface IStorage {
   // Organization operations
   createOrganization(org: InsertOrganization): Promise<Organization>;
   getOrganization(id: number): Promise<Organization | undefined>;
+  getOrganizationBySlug(slug: string): Promise<Organization | undefined>;
   getAllOrganizations(): Promise<Organization[]>;
   updateOrganization(id: number, updates: Partial<Organization>): Promise<Organization>;
   deleteOrganization(id: number): Promise<void>;
   updateOrganizationEmployeeCount(organizationId: number): Promise<void>;
-  
+
   // User operations
   getUser(id: number): Promise<User | undefined>;
   getUserById(id: number): Promise<User | undefined>;
@@ -44,45 +57,63 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   updateUserFaceImage(userId: number, faceImageUrl: string): Promise<User>;
   updateUserFaceEmbedding(userId: number, faceImageUrl: string | null | undefined, faceEmbedding: number[]): Promise<User>;
-  // updateUserFaceEmbeddingVector(userId: number, faceEmbeddingVector: string): Promise<User>; // temporarily disabled
   updateUserPassword(userId: number, hashedPassword: string): Promise<User>;
-  // updateUserPin(userId: number, pinHash: string): Promise<User>; // temporarily disabled
+  updateUserPin(userId: number, pinHash: string): Promise<User>;
+  disableUserPin(userId: number): Promise<User>;
+  clearUserFaceData(userId: number): Promise<User>;
   getAllEmployees(organizationId?: number): Promise<User[]>;
   getAllUsers(organizationId?: number): Promise<User[]>;
   deleteUser(id: number): Promise<void>;
-  
+  getActiveEmployeeCount(organizationId: number): Promise<number>;
+
   // Attendance operations
   createAttendanceRecord(record: InsertAttendanceRecord): Promise<AttendanceRecord>;
   updateAttendanceRecord(id: number, updates: Partial<AttendanceRecord>): Promise<AttendanceRecord>;
   getUserAttendanceRecords(userId: number, limit?: number): Promise<AttendanceRecord[]>;
   getTodayAttendanceRecord(userId: number, date: string): Promise<AttendanceRecord | undefined>;
   getAllAttendanceRecords(organizationId?: number, limit?: number): Promise<AttendanceRecord[]>;
-  
+
   // Location operations
   createLocation(location: InsertLocation): Promise<Location>;
   getActiveLocations(organizationId?: number): Promise<Location[]>;
   getLocationByPostcode(postcode: string, organizationId?: number): Promise<Location | undefined>;
   updateLocation(id: number, updates: Partial<Location>): Promise<Location>;
   deleteLocation(id: number): Promise<void>;
-  
+
   // Invitation operations
   createInvitation(invitation: InsertInvitation & { token: string }): Promise<EmployeeInvitation>;
   getInvitationByToken(token: string): Promise<EmployeeInvitation | undefined>;
   markInvitationUsed(id: number): Promise<EmployeeInvitation>;
   getActiveInvitations(organizationId?: number): Promise<EmployeeInvitation[]>;
-  
+
   // Employee location operations
   assignEmployeeToLocation(assignment: InsertEmployeeLocation): Promise<EmployeeLocation>;
   removeEmployeeFromLocation(userId: number, locationId: number): Promise<void>;
   getEmployeeLocations(userId: number): Promise<Location[]>;
   getUsersAtLocation(locationId: number): Promise<User[]>;
   getAllEmployeeLocationAssignments(organizationId?: number): Promise<(EmployeeLocation & { user: User; location: Location })[]>;
-  
+
   // Audit logging operations
   createVerificationLog(log: InsertAttendanceVerificationLog): Promise<AttendanceVerificationLog>;
   getUserVerificationLogs(userId: number, organizationId: number, limit?: number): Promise<AttendanceVerificationLog[]>;
   getOrganizationVerificationLogs(organizationId: number, limit?: number): Promise<AttendanceVerificationLog[]>;
-  
+
+  // Billing operations
+  getBillingCustomer(organisationId: number): Promise<BillingCustomer | undefined>;
+  getBillingCustomerByStripeId(stripeCustomerId: string): Promise<BillingCustomer | undefined>;
+  createBillingCustomer(customer: InsertBillingCustomer): Promise<BillingCustomer>;
+  getSubscription(organisationId: number): Promise<Subscription | undefined>;
+  getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<Subscription | undefined>;
+  createSubscription(sub: InsertSubscription): Promise<Subscription>;
+  updateSubscription(stripeSubscriptionId: string, updates: Partial<Subscription>): Promise<Subscription>;
+  getWebhookEvent(stripeEventId: string): Promise<WebhookEvent | undefined>;
+  createWebhookEvent(event: InsertWebhookEvent): Promise<WebhookEvent>;
+
+  // Consent operations
+  createConsent(consent: InsertEmployeeConsent): Promise<EmployeeConsent>;
+  getUserConsents(userId: number, organisationId: number): Promise<EmployeeConsent[]>;
+  revokeConsent(userId: number, consentType: string): Promise<void>;
+
   sessionStore: any;
 }
 
@@ -95,7 +126,7 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  // Organization operations
+  // ─── Organization ───────────────────────────
   async createOrganization(org: InsertOrganization): Promise<Organization> {
     const [organization] = await db
       .insert(organizations)
@@ -109,12 +140,17 @@ export class DatabaseStorage implements IStorage {
     return org || undefined;
   }
 
+  async getOrganizationBySlug(slug: string): Promise<Organization | undefined> {
+    const [org] = await db.select().from(organizations).where(eq(organizations.slug, slug));
+    return org || undefined;
+  }
+
   async getAllOrganizations(): Promise<Organization[]> {
     const orgs = await db.select().from(organizations).orderBy(desc(organizations.createdAt));
-    
+
     // Update current employee count for each organization
     const updatedOrgs = await Promise.all(
-      orgs.map(async (org) => {
+      orgs.map(async (org: Organization) => {
         const result = await db
           .select({ count: sql<number>`COUNT(*)` })
           .from(users)
@@ -122,29 +158,27 @@ export class DatabaseStorage implements IStorage {
             eq(users.organizationId, org.id),
             eq(users.isActive, true)
           ));
-        
+
         const count = Number(result[0].count);
-        
-        // Update the database with the current count
+
         await db
           .update(organizations)
           .set({ currentEmployees: count })
           .where(eq(organizations.id, org.id));
-        
+
         return { ...org, currentEmployees: count };
       })
     );
-    
+
     return updatedOrgs;
   }
 
   async updateOrganization(id: number, updates: Partial<Organization>): Promise<Organization> {
-    // Add updatedAt timestamp
     const updateData = {
       ...updates,
       updatedAt: new Date()
     };
-    
+
     const [org] = await db
       .update(organizations)
       .set(updateData)
@@ -154,44 +188,35 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteOrganization(id: number): Promise<void> {
-    // Delete all related data in the correct order to avoid foreign key constraint violations
-    // First, find all users in the organization to clean up references
     const organizationUsers = await db
       .select({ id: users.id })
       .from(users)
       .where(eq(users.organizationId, id));
-    
-    const userIds = organizationUsers.map(u => u.id);
-    
-    // Delete all data that references these users
+
+    const userIds = organizationUsers.map((u: { id: number }) => u.id);
+
     for (const userId of userIds) {
-      // Delete attendance records where user is referenced
       await db.delete(attendanceRecords).where(eq(attendanceRecords.userId, userId));
       await db.delete(attendanceRecords).where(eq(attendanceRecords.manuallyApprovedBy, userId));
-      
-      // Delete employee locations where user is referenced
       await db.delete(employeeLocations).where(eq(employeeLocations.userId, userId));
       await db.delete(employeeLocations).where(eq(employeeLocations.assignedById, userId));
-      
-      // Delete invitations where user is referenced
       await db.delete(employeeInvitations).where(eq(employeeInvitations.invitedBy, userId));
+      await db.delete(employeeConsents).where(eq(employeeConsents.userId, userId));
     }
-    
-    // Delete organization-level data
+
     await db.delete(attendanceRecords).where(eq(attendanceRecords.organizationId, id));
+    await db.delete(attendanceVerificationLogs).where(eq(attendanceVerificationLogs.organizationId, id));
     await db.delete(employeeLocations).where(eq(employeeLocations.organizationId, id));
     await db.delete(employeeInvitations).where(eq(employeeInvitations.organizationId, id));
     await db.delete(locations).where(eq(locations.organizationId, id));
-    
-    // Delete all users in the organization
+    await db.delete(subscriptions).where(eq(subscriptions.organisationId, id));
+    await db.delete(billingCustomers).where(eq(billingCustomers.organisationId, id));
+    await db.delete(employeeConsents).where(eq(employeeConsents.organisationId, id));
     await db.delete(users).where(eq(users.organizationId, id));
-    
-    // Finally delete the organization itself
     await db.delete(organizations).where(eq(organizations.id, id));
   }
 
   async updateOrganizationEmployeeCount(organizationId: number): Promise<void> {
-    // Count only non-admin users (employees and managers)
     const count = await db.select({ count: sql<number>`COUNT(*)` })
       .from(users)
       .where(and(
@@ -199,13 +224,13 @@ export class DatabaseStorage implements IStorage {
         eq(users.isActive, true),
         sql`${users.role} != 'admin'`
       ));
-    
+
     await db.update(organizations)
       .set({ employeeCount: count[0].count })
       .where(eq(organizations.id, organizationId));
   }
 
-  // User operations
+  // ─── Users ──────────────────────────────────
   async getUser(id: number): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user || undefined;
@@ -263,6 +288,45 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async updateUserPin(userId: number, pinHash: string): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({
+        pinHash,
+        pinEnabled: true,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async disableUserPin(userId: number): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({
+        pinHash: null,
+        pinEnabled: false,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async clearUserFaceData(userId: number): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({
+        faceImageUrl: null,
+        faceEmbedding: null,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
   async getAllEmployees(organizationId?: number): Promise<User[]> {
     const conditions = [eq(users.role, "employee")];
     if (organizationId !== undefined) {
@@ -298,7 +362,19 @@ export class DatabaseStorage implements IStorage {
     await db.delete(users).where(eq(users.id, id));
   }
 
-  // Attendance operations
+  async getActiveEmployeeCount(organizationId: number): Promise<number> {
+    const result = await db
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(users)
+      .where(and(
+        eq(users.organizationId, organizationId),
+        eq(users.role, "employee"),
+        eq(users.isActive, true)
+      ));
+    return Number(result[0].count);
+  }
+
+  // ─── Attendance ─────────────────────────────
   async createAttendanceRecord(record: InsertAttendanceRecord): Promise<AttendanceRecord> {
     const [attendanceRecord] = await db
       .insert(attendanceRecords)
@@ -349,15 +425,14 @@ export class DatabaseStorage implements IStorage {
       .limit(limit);
   }
 
-  // Location operations
+  // ─── Locations ──────────────────────────────
   async createLocation(location: InsertLocation): Promise<Location> {
-    // Convert coordinates to strings as required by schema
     const locationData = {
       ...location,
       latitude: location.latitude?.toString(),
       longitude: location.longitude?.toString()
     };
-    
+
     const [newLocation] = await db
       .insert(locations)
       .values([locationData])
@@ -399,21 +474,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteLocation(id: number): Promise<void> {
-    // First remove all employee assignments for this location
     await db.delete(employeeLocations)
       .where(eq(employeeLocations.locationId, id));
-    
-    // Update attendance records to remove location reference
+
     await db.update(attendanceRecords)
       .set({ locationId: null })
       .where(eq(attendanceRecords.locationId, id));
-    
-    // Then delete the location
+
     await db.delete(locations)
       .where(eq(locations.id, id));
   }
 
-  // Invitation operations
+  // ─── Invitations ────────────────────────────
   async createInvitation(invitation: InsertInvitation & { token: string }): Promise<EmployeeInvitation> {
     const [newInvitation] = await db
       .insert(employeeInvitations)
@@ -451,7 +523,7 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(employeeInvitations.createdAt));
   }
 
-  // Employee location operations
+  // ─── Employee Locations ─────────────────────
   async assignEmployeeToLocation(assignment: InsertEmployeeLocation & { organizationId?: number }): Promise<EmployeeLocation> {
     const [employeeLocation] = await db
       .insert(employeeLocations)
@@ -489,7 +561,7 @@ export class DatabaseStorage implements IStorage {
         eq(employeeLocations.userId, userId),
         eq(locations.isActive, true)
       ));
-    
+
     return result;
   }
 
@@ -502,8 +574,12 @@ export class DatabaseStorage implements IStorage {
         lastName: users.lastName,
         password: users.password,
         role: users.role,
+        organizationId: users.organizationId,
         faceImageUrl: users.faceImageUrl,
         faceEmbedding: users.faceEmbedding,
+        pinHash: users.pinHash,
+        pinEnabled: users.pinEnabled,
+        lastPinUsed: users.lastPinUsed,
         isActive: users.isActive,
         createdAt: users.createdAt,
         updatedAt: users.updatedAt,
@@ -514,7 +590,7 @@ export class DatabaseStorage implements IStorage {
         eq(employeeLocations.locationId, locationId),
         eq(users.isActive, true)
       ));
-    
+
     return result;
   }
 
@@ -524,12 +600,12 @@ export class DatabaseStorage implements IStorage {
         eq(users.isActive, true),
         eq(locations.isActive, true)
       ];
-      
+
       if (organizationId !== undefined) {
         conditions.push(eq(users.organizationId, organizationId));
         conditions.push(eq(locations.organizationId, organizationId));
       }
-      
+
       const result = await db
         .select()
         .from(employeeLocations)
@@ -537,12 +613,13 @@ export class DatabaseStorage implements IStorage {
         .innerJoin(locations, eq(employeeLocations.locationId, locations.id))
         .where(and(...conditions))
         .orderBy(users.firstName, users.lastName);
-      
-      return result.map(row => ({
+
+      return result.map((row: any) => ({
         id: row.employee_locations.id,
         userId: row.employee_locations.userId,
         locationId: row.employee_locations.locationId,
         assignedById: row.employee_locations.assignedById,
+        organizationId: row.employee_locations.organizationId,
         createdAt: row.employee_locations.createdAt,
         user: row.users,
         location: row.locations
@@ -553,34 +630,7 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  // New methods for enhanced security features
-
-  // async updateUserFaceEmbeddingVector(userId: number, faceEmbeddingVector: string): Promise<User> {
-  //   const [user] = await db
-  //     .update(users)
-  //     .set({ 
-  //       faceEmbeddingVector,
-  //       updatedAt: new Date()
-  //     })
-  //     .where(eq(users.id, userId))
-  //     .returning();
-  //   return user;
-  // }
-
-  // async updateUserPin(userId: number, pinHash: string): Promise<User> {
-  //   const [user] = await db
-  //     .update(users)
-  //     .set({ 
-  //       pinHash,
-  //       pinEnabled: true,
-  //       updatedAt: new Date()
-  //     })
-  //     .where(eq(users.id, userId))
-  //     .returning();
-  //   return user;
-  // }
-
-  // Audit logging methods
+  // ─── Verification Logs ──────────────────────
   async createVerificationLog(log: InsertAttendanceVerificationLog): Promise<AttendanceVerificationLog> {
     const [verificationLog] = await db
       .insert(attendanceVerificationLogs)
@@ -610,6 +660,113 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(attendanceVerificationLogs.attemptTime))
       .limit(limit);
     return logs;
+  }
+
+  // ─── Billing ────────────────────────────────
+  async getBillingCustomer(organisationId: number): Promise<BillingCustomer | undefined> {
+    const [customer] = await db
+      .select()
+      .from(billingCustomers)
+      .where(eq(billingCustomers.organisationId, organisationId));
+    return customer || undefined;
+  }
+
+  async getBillingCustomerByStripeId(stripeCustomerId: string): Promise<BillingCustomer | undefined> {
+    const [customer] = await db
+      .select()
+      .from(billingCustomers)
+      .where(eq(billingCustomers.stripeCustomerId, stripeCustomerId));
+    return customer || undefined;
+  }
+
+  async createBillingCustomer(customer: InsertBillingCustomer): Promise<BillingCustomer> {
+    const [billingCustomer] = await db
+      .insert(billingCustomers)
+      .values(customer)
+      .returning();
+    return billingCustomer;
+  }
+
+  async getSubscription(organisationId: number): Promise<Subscription | undefined> {
+    const [sub] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.organisationId, organisationId))
+      .orderBy(desc(subscriptions.createdAt))
+      .limit(1);
+    return sub || undefined;
+  }
+
+  async getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<Subscription | undefined> {
+    const [sub] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.stripeSubscriptionId, stripeSubscriptionId));
+    return sub || undefined;
+  }
+
+  async createSubscription(sub: InsertSubscription): Promise<Subscription> {
+    const [subscription] = await db
+      .insert(subscriptions)
+      .values(sub)
+      .returning();
+    return subscription;
+  }
+
+  async updateSubscription(stripeSubscriptionId: string, updates: Partial<Subscription>): Promise<Subscription> {
+    const [subscription] = await db
+      .update(subscriptions)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(subscriptions.stripeSubscriptionId, stripeSubscriptionId))
+      .returning();
+    return subscription;
+  }
+
+  async getWebhookEvent(stripeEventId: string): Promise<WebhookEvent | undefined> {
+    const [event] = await db
+      .select()
+      .from(webhookEvents)
+      .where(eq(webhookEvents.stripeEventId, stripeEventId));
+    return event || undefined;
+  }
+
+  async createWebhookEvent(event: InsertWebhookEvent): Promise<WebhookEvent> {
+    const [webhookEvent] = await db
+      .insert(webhookEvents)
+      .values(event)
+      .returning();
+    return webhookEvent;
+  }
+
+  // ─── Consents ───────────────────────────────
+  async createConsent(consent: InsertEmployeeConsent): Promise<EmployeeConsent> {
+    const [newConsent] = await db
+      .insert(employeeConsents)
+      .values(consent)
+      .returning();
+    return newConsent;
+  }
+
+  async getUserConsents(userId: number, organisationId: number): Promise<EmployeeConsent[]> {
+    return await db
+      .select()
+      .from(employeeConsents)
+      .where(and(
+        eq(employeeConsents.userId, userId),
+        eq(employeeConsents.organisationId, organisationId)
+      ))
+      .orderBy(desc(employeeConsents.consentedAt));
+  }
+
+  async revokeConsent(userId: number, consentType: string): Promise<void> {
+    await db
+      .update(employeeConsents)
+      .set({ revokedAt: new Date() })
+      .where(and(
+        eq(employeeConsents.userId, userId),
+        eq(employeeConsents.consentType, consentType),
+        sql`${employeeConsents.revokedAt} IS NULL`
+      ));
   }
 }
 

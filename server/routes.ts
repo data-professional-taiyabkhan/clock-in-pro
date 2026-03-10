@@ -1,8 +1,8 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { setupAuth, requireAuth, requireManager, requireAdmin, requireDeveloper, hashPassword, comparePasswords } from "./auth";
+import { setupAuth, requireAuth, requireManager, requireAdmin, hashPassword, comparePasswords } from "./auth";
 import { storage } from "./storage";
-import { insertAttendanceRecordSchema, insertLocationSchema, loginSchema, registerSchema, insertOrganizationSchema, setupPinSchema, verifyPinSchema, users, employeeInvitations, locations, employeeLocations } from "@shared/schema";
+import { insertAttendanceRecordSchema, insertLocationSchema, loginSchema, registerSchema, insertOrganizationSchema, setupPinSchema, verifyPinSchema, signupSchema, users, employeeInvitations, locations, employeeLocations } from "@shared/schema";
 import type { User } from "@shared/schema";
 import { z } from "zod";
 import { desc, eq, and } from "drizzle-orm";
@@ -40,42 +40,42 @@ function calculateEuclideanDistance(embedding1: number[], embedding2: number[]):
   if (embedding1.length !== embedding2.length) {
     throw new Error('Embedding lengths must match');
   }
-  
+
   let sum = 0;
   for (let i = 0; i < embedding1.length; i++) {
     const diff = embedding1[i] - embedding2[i];
     sum += diff * diff;
   }
-  
+
   return Math.sqrt(sum);
 }
 
 // Simple embedding-based face comparison with proven threshold
-async function compareEmbeddings(storedEmbedding: number[], capturedImageData: string): Promise<{ 
-  isMatch: boolean; 
-  distance: number; 
-  confidence: number; 
-  details: any 
+async function compareEmbeddings(storedEmbedding: number[], capturedImageData: string): Promise<{
+  isMatch: boolean;
+  distance: number;
+  confidence: number;
+  details: any
 }> {
   try {
     // Generate embedding from captured image using face-api.js descriptors
     // For now, we'll use a simplified approach and improve based on actual face-api.js integration
-    
+
     // Standard threshold for face-api.js descriptors (usually between 0.4-0.6)
     const FACE_MATCH_THRESHOLD = 0.6;
-    
+
     // Extract face descriptor from the image data if provided
     // The frontend should send face descriptors along with the image
     let capturedEmbedding = null;
-    
+
     // Try to extract embedding from request body if provided by frontend
     // For now, we'll need to implement proper integration with face-api.js descriptors
     const mockCapturedEmbedding = new Array(128).fill(0).map(() => Math.random() * 0.2);
-    
+
     const distance = calculateEuclideanDistance(storedEmbedding, mockCapturedEmbedding);
     const isMatch = distance <= FACE_MATCH_THRESHOLD;
     const confidence = Math.max(0, Math.min(100, (1 - distance / 2) * 100));
-    
+
     return {
       isMatch,
       distance,
@@ -100,15 +100,15 @@ async function compareEmbeddings(storedEmbedding: number[], capturedImageData: s
 async function compareFaceDescriptors(storedEncoding: number[], capturedImageData: string): Promise<{ isMatch: boolean; similarity: number; confidence: number; details: any }> {
   try {
     const { spawn } = await import('child_process');
-    
+
     return new Promise((resolve) => {
       const python = spawn(getPythonCommand(), ['server/face_recognition_service.py', 'compare'], {
         env: getPythonEnv()
       });
-      
+
       let stdout = '';
       let stderr = '';
-      
+
       // Handle process startup errors
       python.on('error', (error) => {
         console.error('Failed to start Python process:', error);
@@ -119,20 +119,20 @@ async function compareFaceDescriptors(storedEncoding: number[], capturedImageDat
           details: { error: `Failed to start face recognition: ${error.message}` }
         });
       });
-      
+
       // Handle stdin errors to prevent crashes
       python.stdin.on('error', (error) => {
         console.error('Python stdin error:', error);
       });
-      
+
       python.stdout.on('data', (data) => {
         stdout += data.toString();
       });
-      
+
       python.stderr.on('data', (data) => {
         stderr += data.toString();
       });
-      
+
       python.on('close', (code) => {
         if (code !== 0) {
           console.error('Face recognition service error:', stderr);
@@ -144,10 +144,10 @@ async function compareFaceDescriptors(storedEncoding: number[], capturedImageDat
           });
           return;
         }
-        
+
         try {
           const result = JSON.parse(stdout);
-          
+
           if (!result.success) {
             resolve({
               isMatch: false,
@@ -157,11 +157,11 @@ async function compareFaceDescriptors(storedEncoding: number[], capturedImageDat
             });
             return;
           }
-          
+
           // Convert face_recognition results to our format
           const similarity = result.confidence;
           const isMatch = result.match;
-          
+
           const details = {
             distance: result.distance,
             tolerance: result.tolerance,
@@ -173,7 +173,7 @@ async function compareFaceDescriptors(storedEncoding: number[], capturedImageDat
               match: isMatch
             }
           };
-          
+
           // Debug logging for development
           console.log(`Face recognition comparison:`, {
             distance: result.distance.toFixed(4),
@@ -183,14 +183,14 @@ async function compareFaceDescriptors(storedEncoding: number[], capturedImageDat
             match: isMatch,
             method: 'face_recognition_dlib'
           });
-          
+
           resolve({
             isMatch,
             similarity,
             confidence: result.confidence,
             details
           });
-          
+
         } catch (parseError) {
           console.error('Failed to parse face recognition result:', parseError);
           resolve({
@@ -201,7 +201,7 @@ async function compareFaceDescriptors(storedEncoding: number[], capturedImageDat
           });
         }
       });
-      
+
       python.on('error', (error) => {
         console.error('Failed to start face recognition service:', error);
         resolve({
@@ -211,18 +211,18 @@ async function compareFaceDescriptors(storedEncoding: number[], capturedImageDat
           details: { error: `Failed to start face recognition: ${error.message}` }
         });
       });
-      
+
       // Send comparison data to Python service
       const inputData = {
         known_encoding: storedEncoding,
         unknown_image: capturedImageData,
         tolerance: 0.3  // Stricter tolerance for attendance systems
       };
-      
+
       python.stdin.write(JSON.stringify(inputData));
       python.stdin.end();
     });
-    
+
   } catch (error) {
     console.error('Face descriptor comparison error:', error);
     return { isMatch: false, similarity: 0, confidence: 0, details: { error: error.message } };
@@ -234,25 +234,25 @@ async function compareFaceDescriptors(storedEncoding: number[], capturedImageDat
 async function detectFaceInImage(imageData: string): Promise<{ hasFace: boolean; confidence: number; details: any }> {
   try {
     const sharp = await import('sharp');
-    
+
     // Convert base64 to buffer
     const base64 = imageData.replace(/^data:image\/[a-z]+;base64,/, '');
     const buffer = Buffer.from(base64, 'base64');
-    
+
     // Get image metadata and statistics
     const image = sharp.default(buffer);
     const { width, height } = await image.metadata();
-    
+
     if (!width || !height || width < 80 || height < 80) {
       return { hasFace: false, confidence: 0, details: { reason: 'Image too small' } };
     }
-    
+
     // Resize to standard size for analysis
     const standardSize = 200;
     const resizedBuffer = await image.resize(standardSize, standardSize).greyscale().raw().toBuffer();
     const pixels = new Uint8Array(resizedBuffer);
     const totalPixels = pixels.length;
-    
+
     // 1. Calculate image statistics
     let sum = 0;
     let sumSquares = 0;
@@ -260,25 +260,25 @@ async function detectFaceInImage(imageData: string): Promise<{ hasFace: boolean;
       sum += pixels[i];
       sumSquares += pixels[i] * pixels[i];
     }
-    
+
     const mean = sum / totalPixels;
     const variance = (sumSquares / totalPixels) - (mean * mean);
-    
+
     // 2. Check for obviously blank/uniform images (walls, blank screens)
     if (variance < 200) {
       return { hasFace: false, confidence: 0, details: { reason: 'Blank or uniform image', variance } };
     }
-    
+
     // 3. Brightness distribution analysis
     const sortedPixels = Array.from(pixels).sort((a, b) => a - b);
     const q1 = sortedPixels[Math.floor(totalPixels * 0.25)];
     const q3 = sortedPixels[Math.floor(totalPixels * 0.75)];
     const iqr = q3 - q1;
-    
+
     if (iqr < 15) {
       return { hasFace: false, confidence: 0, details: { reason: 'Poor contrast', iqr } };
     }
-    
+
     // 4. Edge detection for facial features
     const edgeBuffer = await sharp.default(buffer)
       .resize(standardSize, standardSize)
@@ -290,19 +290,19 @@ async function detectFaceInImage(imageData: string): Promise<{ hasFace: boolean;
       })
       .raw()
       .toBuffer();
-    
+
     const edgePixels = new Uint8Array(edgeBuffer);
     let strongEdges = 0;
     let mediumEdges = 0;
-    
+
     for (let i = 0; i < edgePixels.length; i++) {
       if (edgePixels[i] > 80) strongEdges++;
       else if (edgePixels[i] > 40) mediumEdges++;
     }
-    
+
     const strongEdgeRatio = strongEdges / edgePixels.length;
     const totalEdgeRatio = (strongEdges + mediumEdges) / edgePixels.length;
-    
+
     // 5. Symmetry analysis (faces are roughly symmetrical)
     let symmetryScore = 0;
     const centerY = Math.floor(standardSize / 2);
@@ -315,7 +315,7 @@ async function detectFaceInImage(imageData: string): Promise<{ hasFace: boolean;
       }
     }
     symmetryScore = symmetryScore / (standardSize * centerY * 50);
-    
+
     // 6. Face-like region detection (center region should be darker/different)
     const centerRegionSize = Math.floor(standardSize * 0.6);
     const centerStart = Math.floor((standardSize - centerRegionSize) / 2);
@@ -323,12 +323,12 @@ async function detectFaceInImage(imageData: string): Promise<{ hasFace: boolean;
     let borderSum = 0;
     let centerCount = 0;
     let borderCount = 0;
-    
+
     for (let y = 0; y < standardSize; y++) {
       for (let x = 0; x < standardSize; x++) {
         const pixel = pixels[y * standardSize + x];
-        if (y >= centerStart && y < centerStart + centerRegionSize && 
-            x >= centerStart && x < centerStart + centerRegionSize) {
+        if (y >= centerStart && y < centerStart + centerRegionSize &&
+          x >= centerStart && x < centerStart + centerRegionSize) {
           centerSum += pixel;
           centerCount++;
         } else {
@@ -337,32 +337,32 @@ async function detectFaceInImage(imageData: string): Promise<{ hasFace: boolean;
         }
       }
     }
-    
+
     const centerMean = centerSum / centerCount;
     const borderMean = borderSum / borderCount;
     const centerBorderDiff = Math.abs(centerMean - borderMean);
-    
+
     // 7. Calculate confidence score
     let confidence = 0;
-    
+
     // Variance component (0-25 points)
     confidence += Math.min(25, variance / 20);
-    
+
     // Contrast component (0-20 points)
     confidence += Math.min(20, iqr / 3);
-    
+
     // Edge component (0-25 points)
     confidence += Math.min(15, strongEdgeRatio * 300);
     confidence += Math.min(10, totalEdgeRatio * 100);
-    
+
     // Symmetry component (0-15 points)
     confidence += symmetryScore * 15;
-    
+
     // Center-border difference (0-15 points)
     confidence += Math.min(15, centerBorderDiff / 5);
-    
+
     const hasFace = confidence >= 35; // More lenient threshold for face detection
-    
+
     const details = {
       variance: Math.round(variance),
       iqr,
@@ -372,11 +372,11 @@ async function detectFaceInImage(imageData: string): Promise<{ hasFace: boolean;
       centerBorderDiff: Math.round(centerBorderDiff),
       confidence: Math.round(confidence)
     };
-    
+
     console.log(`Enhanced face detection: ${hasFace ? 'FACE DETECTED' : 'NO FACE'} (confidence: ${confidence.toFixed(1)})`, details);
-    
+
     return { hasFace, confidence, details };
-    
+
   } catch (error) {
     console.error('Advanced face detection error:', error);
     return { hasFace: false, confidence: 0, details: { error: error.message } };
@@ -387,14 +387,14 @@ async function detectFaceInImage(imageData: string): Promise<{ hasFace: boolean;
 async function compareImages(registeredImageData: string, capturedImageData: string): Promise<{ isMatch: boolean; similarity: number; confidence: number; details: any }> {
   try {
     const sharp = await import('sharp');
-    
+
     // Convert base64 to buffers
     const registeredBase64 = registeredImageData.replace(/^data:image\/[a-z]+;base64,/, '');
     const capturedBase64 = capturedImageData.replace(/^data:image\/[a-z]+;base64,/, '');
-    
+
     const registeredBuffer = Buffer.from(registeredBase64, 'base64');
     const capturedBuffer = Buffer.from(capturedBase64, 'base64');
-    
+
     // Run multiple comparison algorithms in parallel
     const [
       pixelComparison,
@@ -409,7 +409,7 @@ async function compareImages(registeredImageData: string, capturedImageData: str
       compareStructuralSimilarity(sharp, registeredBuffer, capturedBuffer),
       compareFacialFeatures(sharp, registeredBuffer, capturedBuffer)
     ]);
-    
+
     // Weighted scoring system
     const weights = {
       pixel: 0.15,
@@ -418,29 +418,29 @@ async function compareImages(registeredImageData: string, capturedImageData: str
       structural: 0.25,
       features: 0.20
     };
-    
-    const weightedSimilarity = 
+
+    const weightedSimilarity =
       pixelComparison * weights.pixel +
       histogramComparison * weights.histogram +
       edgeComparison * weights.edge +
       structuralComparison * weights.structural +
       featureComparison * weights.features;
-    
+
     // Calculate confidence based on consistency across methods
     const scores = [pixelComparison, histogramComparison, edgeComparison, structuralComparison, featureComparison];
     const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
     const variance = scores.reduce((acc, score) => acc + Math.pow(score - mean, 2), 0) / scores.length;
     const consistency = Math.max(0, 1 - variance); // Higher consistency = higher confidence
-    
+
     const confidence = (weightedSimilarity + consistency) / 2 * 100;
-    
+
     // User-friendly threshold for real-world usage
     let threshold = 0.30; // Base threshold - practical for daily use
     if (confidence > 80) threshold = 0.25; // Lower threshold for high confidence
     if (confidence < 60) threshold = 0.35; // Slightly higher for very low confidence
-    
+
     const isMatch = weightedSimilarity >= threshold;
-    
+
     const details = {
       pixel: Math.round(pixelComparison * 100),
       histogram: Math.round(histogramComparison * 100),
@@ -452,16 +452,16 @@ async function compareImages(registeredImageData: string, capturedImageData: str
       threshold: Math.round(threshold * 100),
       consistency: Math.round(consistency * 100)
     };
-    
+
     console.log(`Advanced face comparison:`, details);
-    
+
     return {
       isMatch,
       similarity: weightedSimilarity * 100,
       confidence,
       details
     };
-    
+
   } catch (error) {
     console.error('Advanced face comparison error:', error);
     return { isMatch: false, similarity: 0, confidence: 0, details: { error: error.message } };
@@ -474,12 +474,12 @@ async function comparePixelSimilarity(sharp: any, buffer1: Buffer, buffer2: Buff
   const size = 128;
   const img1 = await sharp.default(buffer1).resize(size, size).greyscale().raw().toBuffer();
   const img2 = await sharp.default(buffer2).resize(size, size).greyscale().raw().toBuffer();
-  
+
   let totalDiff = 0;
   for (let i = 0; i < img1.length; i++) {
     totalDiff += Math.abs(img1[i] - img2[i]);
   }
-  
+
   return 1 - (totalDiff / (img1.length * 255));
 }
 
@@ -487,63 +487,63 @@ async function compareHistograms(sharp: any, buffer1: Buffer, buffer2: Buffer): 
   const size = 128;
   const img1 = await sharp.default(buffer1).resize(size, size).greyscale().raw().toBuffer();
   const img2 = await sharp.default(buffer2).resize(size, size).greyscale().raw().toBuffer();
-  
+
   // Create histograms
   const hist1 = new Array(256).fill(0);
   const hist2 = new Array(256).fill(0);
-  
+
   for (let i = 0; i < img1.length; i++) {
     hist1[img1[i]]++;
     hist2[img2[i]]++;
   }
-  
+
   // Normalize histograms
   const total = img1.length;
   for (let i = 0; i < 256; i++) {
     hist1[i] /= total;
     hist2[i] /= total;
   }
-  
+
   // Calculate correlation coefficient
   let correlation = 0;
   for (let i = 0; i < 256; i++) {
     correlation += hist1[i] * hist2[i];
   }
-  
+
   return Math.sqrt(correlation);
 }
 
 async function compareEdgePatterns(sharp: any, buffer1: Buffer, buffer2: Buffer): Promise<number> {
   const size = 128;
-  
+
   // Sobel edge detection
   const sobelX = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
   const sobelY = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
-  
+
   const edges1 = await sharp.default(buffer1)
     .resize(size, size)
     .greyscale()
     .convolve({ width: 3, height: 3, kernel: sobelX })
     .raw()
     .toBuffer();
-    
+
   const edges2 = await sharp.default(buffer2)
     .resize(size, size)
     .greyscale()
     .convolve({ width: 3, height: 3, kernel: sobelX })
     .raw()
     .toBuffer();
-  
+
   let similarity = 0;
   for (let i = 0; i < edges1.length; i++) {
     similarity += Math.min(edges1[i], edges2[i]);
   }
-  
+
   let maxPossible = 0;
   for (let i = 0; i < edges1.length; i++) {
     maxPossible += Math.max(edges1[i], edges2[i]);
   }
-  
+
   return maxPossible > 0 ? similarity / maxPossible : 0;
 }
 
@@ -551,7 +551,7 @@ async function compareStructuralSimilarity(sharp: any, buffer1: Buffer, buffer2:
   const size = 64; // Smaller for structural analysis
   const img1 = await sharp.default(buffer1).resize(size, size).greyscale().raw().toBuffer();
   const img2 = await sharp.default(buffer2).resize(size, size).greyscale().raw().toBuffer();
-  
+
   // Calculate means
   let mean1 = 0, mean2 = 0;
   for (let i = 0; i < img1.length; i++) {
@@ -560,7 +560,7 @@ async function compareStructuralSimilarity(sharp: any, buffer1: Buffer, buffer2:
   }
   mean1 /= img1.length;
   mean2 /= img2.length;
-  
+
   // Calculate variances and covariance
   let var1 = 0, var2 = 0, cov = 0;
   for (let i = 0; i < img1.length; i++) {
@@ -573,14 +573,14 @@ async function compareStructuralSimilarity(sharp: any, buffer1: Buffer, buffer2:
   var1 /= img1.length;
   var2 /= img2.length;
   cov /= img1.length;
-  
+
   // SSIM calculation
   const c1 = 0.01 * 255 * 0.01 * 255;
   const c2 = 0.03 * 255 * 0.03 * 255;
-  
-  const ssim = ((2 * mean1 * mean2 + c1) * (2 * cov + c2)) / 
-               ((mean1 * mean1 + mean2 * mean2 + c1) * (var1 + var2 + c2));
-  
+
+  const ssim = ((2 * mean1 * mean2 + c1) * (2 * cov + c2)) /
+    ((mean1 * mean1 + mean2 * mean2 + c1) * (var1 + var2 + c2));
+
   return Math.max(0, ssim);
 }
 
@@ -588,21 +588,21 @@ async function compareFacialFeatures(sharp: any, buffer1: Buffer, buffer2: Buffe
   const size = 100;
   const img1 = await sharp.default(buffer1).resize(size, size).greyscale().raw().toBuffer();
   const img2 = await sharp.default(buffer2).resize(size, size).greyscale().raw().toBuffer();
-  
+
   // Divide image into facial regions and compare
   const regions = [
     { name: 'eyes', x: 20, y: 25, w: 60, h: 25, weight: 0.4 },
     { name: 'nose', x: 35, y: 40, w: 30, h: 25, weight: 0.3 },
     { name: 'mouth', x: 30, y: 65, w: 40, h: 20, weight: 0.3 }
   ];
-  
+
   let totalSimilarity = 0;
   let totalWeight = 0;
-  
+
   for (const region of regions) {
     let regionSim = 0;
     let regionPixels = 0;
-    
+
     for (let y = region.y; y < region.y + region.h && y < size; y++) {
       for (let x = region.x; x < region.x + region.w && x < size; x++) {
         const idx = y * size + x;
@@ -611,14 +611,14 @@ async function compareFacialFeatures(sharp: any, buffer1: Buffer, buffer2: Buffe
         regionPixels++;
       }
     }
-    
+
     if (regionPixels > 0) {
       regionSim /= regionPixels;
       totalSimilarity += regionSim * region.weight;
       totalWeight += region.weight;
     }
   }
-  
+
   return totalWeight > 0 ? totalSimilarity / totalWeight : 0;
 }
 
@@ -627,15 +627,15 @@ async function compareFacialFeatures(sharp: any, buffer1: Buffer, buffer2: Buffe
 // Simple distance calculation for location verification
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371e3; // Earth's radius in meters
-  const φ1 = lat1 * Math.PI/180;
-  const φ2 = lat2 * Math.PI/180;
-  const Δφ = (lat2-lat1) * Math.PI/180;
-  const Δλ = (lon2-lon1) * Math.PI/180;
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
 
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-          Math.cos(φ1) * Math.cos(φ2) *
-          Math.sin(Δλ/2) * Math.sin(Δλ/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) *
+    Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
   return R * c; // Distance in meters
 }
@@ -662,42 +662,42 @@ async function performLivenessDetection(imageData: string): Promise<{
 
 // Generate face embedding from image using the Python face recognition service
 async function compareFacesWithPython(
-  knownEncoding: number[] | string, 
-  unknownImageData: string, 
+  knownEncoding: number[] | string,
+  unknownImageData: string,
   tolerance: number = 0.6
 ): Promise<{ verified: boolean; distance: number; threshold: number; userEmail?: string }> {
   try {
     const { spawn } = await import('child_process');
-    
+
     return new Promise((resolve, reject) => {
       // Use simple face_recognition library exactly as requested
       const pythonProcess = spawn(getPythonCommand(), ['server/simple_face_recognition.py', 'compare'], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: getPythonEnv()
       });
-      
+
       let output = '';
       let errorOutput = '';
-      
+
       // Handle process startup errors
       pythonProcess.on('error', (error) => {
         console.error('Failed to start Python process:', error);
         reject(new Error(`Failed to start face comparison: ${error.message}`));
       });
-      
+
       // Handle stdin errors to prevent crashes
       pythonProcess.stdin.on('error', (error) => {
         console.error('Python stdin error:', error);
       });
-      
+
       pythonProcess.stdout.on('data', (data) => {
         output += data.toString();
       });
-      
+
       pythonProcess.stderr.on('data', (data) => {
         errorOutput += data.toString();
       });
-      
+
       pythonProcess.on('close', (code) => {
         if (code === 0) {
           try {
@@ -709,7 +709,7 @@ async function compareFacesWithPython(
               console.log(`Threshold: ${tolerance}`);
               console.log(`Match: ${is_match ? 'YES' : 'NO'}`);
               console.log(`===========================================`);
-              
+
               resolve({
                 verified: is_match,
                 distance: distance,
@@ -725,7 +725,7 @@ async function compareFacesWithPython(
           reject(new Error(`Face recognition service failed: ${errorOutput}`));
         }
       });
-      
+
       // Parse known encoding if it's a string
       let parsedEncoding: number[];
       if (typeof knownEncoding === 'string') {
@@ -733,7 +733,7 @@ async function compareFacesWithPython(
       } else {
         parsedEncoding = knownEncoding;
       }
-      
+
       // Send comparison data to Python process
       const inputData = JSON.stringify({
         known_encoding: parsedEncoding,
@@ -752,36 +752,36 @@ async function compareFacesWithPython(
 async function generateProbeEmbedding(imageData: string): Promise<number[]> {
   try {
     const { spawn } = await import('child_process');
-    
+
     return new Promise((resolve, reject) => {
       // Use simple face_recognition library to generate encoding
       const pythonProcess = spawn(getPythonCommand(), ['server/simple_face_recognition.py', 'encode'], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: getPythonEnv()
       });
-      
+
       let output = '';
       let errorOutput = '';
-      
+
       // Handle process startup errors
       pythonProcess.on('error', (error) => {
         console.error('Failed to start Python process:', error);
         reject(new Error(`Failed to start face encoding: ${error.message}`));
       });
-      
+
       // Handle stdin errors to prevent crashes
       pythonProcess.stdin.on('error', (error) => {
         console.error('Python stdin error:', error);
       });
-      
+
       pythonProcess.stdout.on('data', (data) => {
         output += data.toString();
       });
-      
+
       pythonProcess.stderr.on('data', (data) => {
         errorOutput += data.toString();
       });
-      
+
       pythonProcess.on('close', (code) => {
         if (code === 0) {
           try {
@@ -799,7 +799,7 @@ async function generateProbeEmbedding(imageData: string): Promise<number[]> {
           reject(new Error(`Face recognition service failed: ${errorOutput}`));
         }
       });
-      
+
       // Send image data as JSON to Python process
       const inputData = JSON.stringify({ image_data: imageData });
       pythonProcess.stdin.write(inputData);
@@ -818,14 +818,14 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/login", async (req, res) => {
     try {
       console.log("Login request received:", req.body);
-      
+
       const { email, password, organizationId } = req.body;
       console.log("Parsed credentials:", { email, password: password ? "***" : "missing", organizationId });
-      
+
       // Get user by email and organization ID for organization-specific authentication
       const user = await storage.getUserByEmail(email, organizationId);
       console.log("User found:", user ? `${user.email} (active: ${user.isActive}, org: ${user.organizationId})` : "none");
-      
+
       if (!user) {
         return res.status(401).json({ message: "Invalid email or password, or user not found in this organization" });
       }
@@ -841,7 +841,7 @@ export function registerRoutes(app: Express): Server {
 
       const isPasswordValid = await comparePasswords(password, user.password);
       console.log("Password validation result:", isPasswordValid);
-      
+
       if (!isPasswordValid) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
@@ -861,7 +861,7 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/register", requireManager, async (req, res) => {
     try {
       const userData = registerSchema.parse(req.body);
-      
+
       // Check if user already exists
       const existingUser = await storage.getUserByEmail(userData.email);
       if (existingUser) {
@@ -870,7 +870,7 @@ export function registerRoutes(app: Express): Server {
 
       // Hash password
       const hashedPassword = await hashPassword(userData.password);
-      
+
       const { confirmPassword, ...userToCreate } = userData;
       const user = await storage.createUser({
         ...userToCreate,
@@ -889,6 +889,65 @@ export function registerRoutes(app: Express): Server {
     req.session?.destroy(() => {
       res.json({ message: "Logged out successfully" });
     });
+  });
+
+  // ── Public signup: create organisation + admin + trial ──
+  app.post("/api/signup", async (req, res) => {
+    try {
+      const data = signupSchema.parse(req.body);
+
+      // Check slug uniqueness
+      const existingOrg = await storage.getOrganizationBySlug(data.slug);
+      if (existingOrg) {
+        return res.status(400).json({ message: "Organisation slug already taken" });
+      }
+
+      // Check email uniqueness (global — admin emails should be unique)
+      const existingUser = await storage.getUserByEmail(data.email);
+      if (existingUser) {
+        return res.status(400).json({ message: "An account with this email already exists" });
+      }
+
+      // Create organisation with 14-day trial
+      const trialEnd = new Date();
+      trialEnd.setDate(trialEnd.getDate() + 14);
+
+      const org = await storage.createOrganization({
+        name: data.orgName,
+        slug: data.slug,
+        isActive: true,
+        trialEndsAt: trialEnd,
+      });
+
+      // Create admin user
+      const hashedPassword = await hashPassword(data.password);
+      const adminUser = await storage.createUser({
+        email: data.email,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        password: hashedPassword,
+        role: "admin",
+        organizationId: org.id,
+        isActive: true,
+      });
+
+      // Link admin to organisation
+      await storage.updateOrganization(org.id, { adminId: adminUser.id });
+
+      // Auto-login
+      (req.session as any).userId = adminUser.id;
+
+      res.json({
+        user: toSafeUser(adminUser),
+        organization: { id: org.id, name: org.name, slug: org.slug, trialEndsAt: org.trialEndsAt },
+      });
+    } catch (error) {
+      console.error("Signup error:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid signup data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Signup failed" });
+    }
   });
 
   app.get("/api/user", requireAuth, (req, res) => {
@@ -927,7 +986,7 @@ export function registerRoutes(app: Express): Server {
         try {
           const { spawn } = await import('child_process');
           const pythonCmd = getPythonCommand();
-          
+
           const embeddingResult = await new Promise<{
             success: boolean;
             embedding?: number[];
@@ -937,10 +996,10 @@ export function registerRoutes(app: Express): Server {
               stdio: ['pipe', 'pipe', 'pipe'],
               env: getPythonEnv()
             });
-            
+
             let output = '';
             let errorOutput = '';
-            
+
             pythonProcess.on('error', (error) => {
               console.error('Failed to start InsightFace process:', error);
               resolve({ success: false, error: `Failed to start embedding: ${error.message}` });
@@ -1089,27 +1148,27 @@ export function registerRoutes(app: Express): Server {
         currentPassword: z.string().min(6),
         newPassword: z.string().min(6),
       });
-      
+
       const { currentPassword, newPassword } = passwordChangeSchema.parse(req.body);
-      
+
       // Get fresh user data to ensure we have the latest password hash
       const user = await storage.getUser(req.user!.id);
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
-      
+
       // Verify current password
       const isPasswordValid = await comparePasswords(currentPassword, user.password);
       if (!isPasswordValid) {
         return res.status(401).json({ message: "Current password is incorrect" });
       }
-      
+
       // Hash new password
       const hashedNewPassword = await hashPassword(newPassword);
-      
+
       // Update password
       await storage.updateUserPassword(user.id, hashedNewPassword);
-      
+
       console.log(`Password changed successfully for user ${user.email}`);
       res.json({ message: "Password changed successfully" });
     } catch (error) {
@@ -1131,17 +1190,17 @@ export function registerRoutes(app: Express): Server {
 
       const { imageData } = req.body;
       const employeeId = parseInt(req.params.id);
-      
+
       if (!imageData || !imageData.startsWith('data:image/')) {
         return res.status(400).json({ message: "Invalid image data" });
       }
-      
+
       // CRITICAL: Verify that the employee belongs to the same organization as the manager
       const employee = await storage.getUser(employeeId);
       if (!employee) {
         return res.status(404).json({ message: "Employee not found" });
       }
-      
+
       if (employee.organizationId !== req.user!.organizationId) {
         return res.status(403).json({ message: "Access denied - employee not in your organization" });
       }
@@ -1157,10 +1216,10 @@ export function registerRoutes(app: Express): Server {
       // Store face image using AWS Rekognition and S3
       try {
         console.log(`Storing face image for employee ${employeeId} using AWS Rekognition...`);
-        
+
         // Step 1: Analyze face quality
         const qualityCheck = await analyzeFaceQuality(imageData);
-        
+
         if (!qualityCheck.isGoodQuality) {
           return res.status(400).json({
             message: "Poor image quality",
@@ -1173,31 +1232,31 @@ export function registerRoutes(app: Express): Server {
             ]
           });
         }
-        
+
         // Step 2: Upload to S3
         const s3Result = await uploadFaceImage(employeeId, imageData);
-        
+
         if (!s3Result.success) {
           throw new Error(s3Result.error || 'S3 upload failed');
         }
-        
+
         // Step 3: Register in AWS Rekognition
         const rekognitionResult = await registerFace(imageData, employeeId);
-        
+
         if (!rekognitionResult.success) {
           console.error("Rekognition registration failed:", rekognitionResult.error);
           // Continue anyway - S3 upload succeeded
         }
-        
+
         // Step 4: Update database
         await storage.updateUserFaceImage(employeeId, s3Result.imageUrl!);
-        
+
         // Get updated user
         const updatedUser = await storage.getUser(employeeId);
         if (!updatedUser) {
           throw new Error('Failed to retrieve updated user');
         }
-        
+
         const safeUser = toSafeUser(updatedUser);
         res.json({
           message: "Employee face registered successfully with AWS Rekognition",
@@ -1209,7 +1268,7 @@ export function registerRoutes(app: Express): Server {
             imageQuality: rekognitionResult.imageQuality
           }
         });
-        
+
       } catch (error) {
         console.error("AWS face registration error:", error);
         return res.status(500).json({
@@ -1240,7 +1299,7 @@ export function registerRoutes(app: Express): Server {
         ...req.body,
         organizationId: req.user!.organizationId
       };
-      
+
       const validatedData = insertLocationSchema.parse(locationData);
       const location = await storage.createLocation(validatedData);
       res.json(location);
@@ -1253,17 +1312,17 @@ export function registerRoutes(app: Express): Server {
   app.put("/api/locations/:id", requireAdmin, async (req, res) => {
     try {
       const locationId = parseInt(req.params.id);
-      
+
       // Verify the location belongs to the admin's organization
       const existingLocation = await db.select().from(locations).where(eq(locations.id, locationId)).limit(1);
       if (existingLocation.length === 0) {
         return res.status(404).json({ message: "Location not found" });
       }
-      
+
       if (existingLocation[0].organizationId !== req.user!.organizationId) {
         return res.status(403).json({ message: "Access denied - location not in your organization" });
       }
-      
+
       const updates = req.body;
       const location = await storage.updateLocation(locationId, updates);
       res.json(location);
@@ -1276,24 +1335,24 @@ export function registerRoutes(app: Express): Server {
   app.delete("/api/locations/:id", requireAdmin, async (req, res) => {
     try {
       const locationId = parseInt(req.params.id);
-      
+
       // Check if location exists and belongs to the admin's organization
       const location = await db.select().from(locations).where(eq(locations.id, locationId)).limit(1);
       if (location.length === 0) {
         return res.status(404).json({ message: "Location not found" });
       }
-      
+
       if (location[0].organizationId !== req.user!.organizationId) {
         return res.status(403).json({ message: "Access denied - location not in your organization" });
       }
-      
+
       await storage.deleteLocation(locationId);
       res.json({ message: "Location deleted successfully" });
     } catch (error) {
       console.error("Delete location error:", error);
       if (error.code === '23503') {
-        res.status(400).json({ 
-          message: "Cannot delete location: it has associated data. Please contact system administrator." 
+        res.status(400).json({
+          message: "Cannot delete location: it has associated data. Please contact system administrator."
         });
       } else {
         res.status(500).json({ message: "Failed to delete location" });
@@ -1316,10 +1375,10 @@ export function registerRoutes(app: Express): Server {
     try {
       console.log("Raw request body:", req.body);
       console.log("Body type:", typeof req.body);
-      
+
       // Ensure we have valid data
       let userId, locationId;
-      
+
       if (typeof req.body === 'string') {
         const parsed = JSON.parse(req.body);
         userId = parsed.userId;
@@ -1328,9 +1387,9 @@ export function registerRoutes(app: Express): Server {
         userId = req.body.userId;
         locationId = req.body.locationId;
       }
-      
+
       console.log("Parsed userId:", userId, "locationId:", locationId);
-      
+
       if (!userId || !locationId) {
         return res.status(400).json({ message: "User ID and Location ID are required" });
       }
@@ -1354,7 +1413,7 @@ export function registerRoutes(app: Express): Server {
     try {
       const userId = parseInt(req.params.userId);
       const locationId = parseInt(req.params.locationId);
-      
+
       await storage.removeEmployeeFromLocation(userId, locationId);
       res.json({ message: "Employee removed from location" });
     } catch (error) {
@@ -1376,42 +1435,42 @@ export function registerRoutes(app: Express): Server {
   // Face verification for check-in
   // Face comparison using Python face_recognition library (same as desktop system)
   async function compareFacesWithPython(
-    knownEncoding: number[] | string, 
-    unknownImageData: string, 
+    knownEncoding: number[] | string,
+    unknownImageData: string,
     tolerance: number = 0.6
   ): Promise<{ verified: boolean; distance: number; threshold: number; userEmail?: string }> {
     try {
       const { spawn } = await import('child_process');
-      
+
       return new Promise((resolve, reject) => {
         // Use Python face recognition service for direct comparison
         const pythonProcess = spawn(getPythonCommand(), ['server/face_recognition_service.py', 'compare'], {
           stdio: ['pipe', 'pipe', 'pipe'],
           env: getPythonEnv()
         });
-        
+
         let output = '';
         let errorOutput = '';
-        
+
         // Handle process startup errors
         pythonProcess.on('error', (error) => {
           console.error('Failed to start Python process:', error);
           reject(new Error(`Failed to start face recognition: ${error.message}`));
         });
-        
+
         // Handle stdin errors to prevent crashes
         pythonProcess.stdin.on('error', (error) => {
           console.error('Python stdin error:', error);
         });
-        
+
         pythonProcess.stdout.on('data', (data) => {
           output += data.toString();
         });
-        
+
         pythonProcess.stderr.on('data', (data) => {
           errorOutput += data.toString();
         });
-        
+
         pythonProcess.on('close', (code) => {
           if (code === 0) {
             try {
@@ -1423,7 +1482,7 @@ export function registerRoutes(app: Express): Server {
                 console.log(`Threshold: ${tolerance}`);
                 console.log(`Match: ${is_match ? 'YES' : 'NO'}`);
                 console.log(`========================================`);
-                
+
                 resolve({
                   verified: is_match,
                   distance: distance,
@@ -1439,7 +1498,7 @@ export function registerRoutes(app: Express): Server {
             reject(new Error(`Face recognition service failed: ${errorOutput}`));
           }
         });
-        
+
         // Parse known encoding if it's a string
         let parsedEncoding: number[];
         if (typeof knownEncoding === 'string') {
@@ -1447,7 +1506,7 @@ export function registerRoutes(app: Express): Server {
         } else {
           parsedEncoding = knownEncoding;
         }
-        
+
         // Send comparison data to Python process
         const inputData = JSON.stringify({
           known_encoding: parsedEncoding,
@@ -1464,203 +1523,165 @@ export function registerRoutes(app: Express): Server {
   }
 
   // Enhanced face verification with liveness detection and audit logging
-  app.post("/api/verify-face", 
-    requireAuth, 
-    createAuthRateLimitMiddleware('faceVerification'), 
+  app.post("/api/verify-face",
+    requireAuth,
+    createAuthRateLimitMiddleware('faceVerification'),
     async (req, res) => {
-    try {
-      const { imageData, descriptor, location, userLocation, action, deviceInfo: clientDeviceInfo } = req.body;
-      const finalLocation = location || userLocation;
-      const deviceInfo = AuditLogger.extractDeviceInfo(req);
-      const fingerprint = DeviceFingerprinting.generateFingerprint(req, clientDeviceInfo);
-      
-      // Check for suspicious activity
-      const suspiciousActivities = await DeviceFingerprinting.detectSuspiciousActivity(
-        req.user!.id,
-        DeviceFingerprinting.extractDeviceInfo(req, clientDeviceInfo),
-        finalLocation ? { latitude: parseFloat(finalLocation.latitude), longitude: parseFloat(finalLocation.longitude) } : undefined
-      );
-      
-      // Log suspicious activities
-      for (const activity of suspiciousActivities) {
-        console.warn(`[SECURITY] Suspicious activity detected for user ${req.user!.id}:`, activity);
-      }
-      
-      // Register device if new
-      const isKnownDevice = await DeviceFingerprinting.isKnownDevice(req.user!.id, fingerprint);
-      if (!isKnownDevice) {
-        await DeviceFingerprinting.registerDevice(
+      try {
+        const { imageData, descriptor, location, userLocation, action, deviceInfo: clientDeviceInfo } = req.body;
+        const finalLocation = location || userLocation;
+        const deviceInfo = AuditLogger.extractDeviceInfo(req);
+        const fingerprint = DeviceFingerprinting.generateFingerprint(req, clientDeviceInfo);
+
+        // Check for suspicious activity
+        const suspiciousActivities = await DeviceFingerprinting.detectSuspiciousActivity(
           req.user!.id,
           DeviceFingerprinting.extractDeviceInfo(req, clientDeviceInfo),
-          false // Not trusted initially
+          finalLocation ? { latitude: parseFloat(finalLocation.latitude), longitude: parseFloat(finalLocation.longitude) } : undefined
         );
-      } else {
-        await DeviceFingerprinting.updateDeviceActivity(req.user!.id, fingerprint);
-      }
-      
-      console.log("Enhanced face verification request:", {
-        user: req.user?.email,
-        hasImageData: !!imageData,
-        hasDescriptor: Array.isArray(descriptor),
-        hasLocation: !!finalLocation,
-        locationData: finalLocation,
-        action
-      });
-      
-      if (!req.user?.faceImageUrl) {
-        // Log failed attempt
-        await AuditLogger.logFaceVerification(
-          req.user!.id,
-          req.user!.organizationId,
-          false,
-          {
-            deviceInfo,
-            failureReason: "No face image registered",
-            metadata: { action }
-          }
-        );
-        
-        return res.status(400).json({ 
-          message: "No face image registered. Please register your face first.",
-          canUsePin: req.user.pinEnabled
-        });
-      }
 
-      // Step 1: Location verification - check if user is assigned to any locations
-      const assignedLocations = await storage.getEmployeeLocations(req.user!.id);
-      console.log("User assigned locations:", assignedLocations);
-      
-      if (assignedLocations.length > 0) {
-        if (!finalLocation || (!finalLocation.latitude || !finalLocation.longitude)) {
+        // Log suspicious activities
+        for (const activity of suspiciousActivities) {
+          console.warn(`[SECURITY] Suspicious activity detected for user ${req.user!.id}:`, activity);
+        }
+
+        // Register device if new
+        const isKnownDevice = await DeviceFingerprinting.isKnownDevice(req.user!.id, fingerprint);
+        if (!isKnownDevice) {
+          await DeviceFingerprinting.registerDevice(
+            req.user!.id,
+            DeviceFingerprinting.extractDeviceInfo(req, clientDeviceInfo),
+            false // Not trusted initially
+          );
+        } else {
+          await DeviceFingerprinting.updateDeviceActivity(req.user!.id, fingerprint);
+        }
+
+        console.log("Enhanced face verification request:", {
+          user: req.user?.email,
+          hasImageData: !!imageData,
+          hasDescriptor: Array.isArray(descriptor),
+          hasLocation: !!finalLocation,
+          locationData: finalLocation,
+          action
+        });
+
+        if (!req.user?.faceImageUrl) {
+          // Log failed attempt
           await AuditLogger.logFaceVerification(
             req.user!.id,
             req.user!.organizationId,
             false,
             {
               deviceInfo,
-              failureReason: "Location verification required",
+              failureReason: "No face image registered",
               metadata: { action }
             }
           );
-          
+
           return res.status(400).json({
-            message: "Location verification required. Please enable location services and try again.",
+            message: "No face image registered. Please register your face first.",
             canUsePin: req.user.pinEnabled
           });
         }
 
-        // Find the closest assigned location
-        let closestLocation = null;
-        let minDistance = Infinity;
-        
-        for (const assignedLocation of assignedLocations) {
-          if (assignedLocation.latitude && assignedLocation.longitude) {
-            const distance = calculateDistance(
-              parseFloat(finalLocation.latitude),
-              parseFloat(finalLocation.longitude),
-              parseFloat(assignedLocation.latitude),
-              parseFloat(assignedLocation.longitude)
+        // Step 1: Location verification - check if user is assigned to any locations
+        const assignedLocations = await storage.getEmployeeLocations(req.user!.id);
+        console.log("User assigned locations:", assignedLocations);
+
+        if (assignedLocations.length > 0) {
+          if (!finalLocation || (!finalLocation.latitude || !finalLocation.longitude)) {
+            await AuditLogger.logFaceVerification(
+              req.user!.id,
+              req.user!.organizationId,
+              false,
+              {
+                deviceInfo,
+                failureReason: "Location verification required",
+                metadata: { action }
+              }
             );
-            
-            console.log(`Distance to ${assignedLocation.name}: ${distance}m (allowed: ${assignedLocation.radiusMeters}m)`);
-            
-            if (distance <= (assignedLocation.radiusMeters || 100) && distance < minDistance) {
-              minDistance = distance;
-              closestLocation = assignedLocation;
+
+            return res.status(400).json({
+              message: "Location verification required. Please enable location services and try again.",
+              canUsePin: req.user.pinEnabled
+            });
+          }
+
+          // Find the closest assigned location
+          let closestLocation = null;
+          let minDistance = Infinity;
+
+          for (const assignedLocation of assignedLocations) {
+            if (assignedLocation.latitude && assignedLocation.longitude) {
+              const distance = calculateDistance(
+                parseFloat(finalLocation.latitude),
+                parseFloat(finalLocation.longitude),
+                parseFloat(assignedLocation.latitude),
+                parseFloat(assignedLocation.longitude)
+              );
+
+              console.log(`Distance to ${assignedLocation.name}: ${distance}m (allowed: ${assignedLocation.radiusMeters}m)`);
+
+              if (distance <= (assignedLocation.radiusMeters || 100) && distance < minDistance) {
+                minDistance = distance;
+                closestLocation = assignedLocation;
+              }
             }
           }
+
+          if (!closestLocation) {
+            const locationNames = assignedLocations.map(loc => loc.name).join(', ');
+
+            await AuditLogger.logFaceVerification(
+              req.user!.id,
+              req.user!.organizationId,
+              false,
+              {
+                locationLatitude: parseFloat(finalLocation.latitude),
+                locationLongitude: parseFloat(finalLocation.longitude),
+                deviceInfo,
+                failureReason: `Not within range of assigned locations: ${locationNames}`,
+                metadata: { action, minDistance }
+              }
+            );
+
+            return res.status(403).json({
+              message: `You are not within range of any assigned work location (${locationNames}). Please move closer to your assigned work location.`,
+              canUsePin: req.user.pinEnabled
+            });
+          }
+
+          console.log(`Location verification passed for ${closestLocation.name} (${minDistance}m away)`);
         }
 
-        if (!closestLocation) {
-          const locationNames = assignedLocations.map(loc => loc.name).join(', ');
-          
+        // Step 2: Liveness Detection
+        console.log(`Starting liveness detection for ${req.user.email}`);
+
+        const livenessResult = await performLivenessDetection(imageData);
+
+        if (!livenessResult.success) {
           await AuditLogger.logFaceVerification(
             req.user!.id,
             req.user!.organizationId,
             false,
             {
-              locationLatitude: parseFloat(finalLocation.latitude),
-              locationLongitude: parseFloat(finalLocation.longitude),
+              locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+              locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
               deviceInfo,
-              failureReason: `Not within range of assigned locations: ${locationNames}`,
-              metadata: { action, minDistance }
+              failureReason: `Liveness detection failed: ${livenessResult.error}`,
+              metadata: { action, livenessScore: livenessResult.livenessScore }
             }
           );
-          
-          return res.status(403).json({ 
-            message: `You are not within range of any assigned work location (${locationNames}). Please move closer to your assigned work location.`,
+
+          return res.status(400).json({
+            verified: false,
+            message: `Liveness detection failed: ${livenessResult.error}`,
             canUsePin: req.user.pinEnabled
           });
         }
-        
-        console.log(`Location verification passed for ${closestLocation.name} (${minDistance}m away)`);
-      }
 
-      // Step 2: Liveness Detection
-      console.log(`Starting liveness detection for ${req.user.email}`);
-      
-      const livenessResult = await performLivenessDetection(imageData);
-      
-      if (!livenessResult.success) {
-        await AuditLogger.logFaceVerification(
-          req.user!.id,
-          req.user!.organizationId,
-          false,
-          {
-            locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
-            locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
-            deviceInfo,
-            failureReason: `Liveness detection failed: ${livenessResult.error}`,
-            metadata: { action, livenessScore: livenessResult.livenessScore }
-          }
-        );
-        
-        return res.status(400).json({
-          verified: false,
-          message: `Liveness detection failed: ${livenessResult.error}`,
-          canUsePin: req.user.pinEnabled
-        });
-      }
-
-      if (!livenessResult.isLive) {
-        await AuditLogger.logFaceVerification(
-          req.user!.id,
-          req.user!.organizationId,
-          false,
-          {
-            locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
-            locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
-            livenessScore: livenessResult.livenessScore,
-            deviceInfo,
-            failureReason: `Liveness detection failed - possible spoofing attempt`,
-            metadata: { 
-              action, 
-              livenessScore: livenessResult.livenessScore,
-              analysis: livenessResult.analysis,
-              recommendations: livenessResult.recommendations
-            }
-          }
-        );
-        
-        return res.status(400).json({
-          verified: false,
-          message: `Liveness verification failed. ${livenessResult.recommendations?.[0] || 'Please ensure you are using a live camera feed.'}`,
-          canUsePin: req.user.pinEnabled,
-          livenessScore: livenessResult.livenessScore,
-          recommendations: livenessResult.recommendations
-        });
-      }
-
-      console.log(`Liveness detection passed with score: ${livenessResult.livenessScore}`);
-
-      // Step 3: Face Recognition
-      console.log(`Starting face recognition for ${req.user.email}`);
-      
-      try {
-        const capturedImage = imageData;
-        const registeredFaceImage = req.user.faceImageUrl;
-        
-        if (!registeredFaceImage) {
+        if (!livenessResult.isLive) {
           await AuditLogger.logFaceVerification(
             req.user!.id,
             req.user!.organizationId,
@@ -1670,129 +1691,72 @@ export function registerRoutes(app: Express): Server {
               locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
               livenessScore: livenessResult.livenessScore,
               deviceInfo,
-              failureReason: "No face template found",
-              metadata: { action }
+              failureReason: `Liveness detection failed - possible spoofing attempt`,
+              metadata: {
+                action,
+                livenessScore: livenessResult.livenessScore,
+                analysis: livenessResult.analysis,
+                recommendations: livenessResult.recommendations
+              }
             }
           );
-          
+
           return res.status(400).json({
             verified: false,
-            message: "No face template found for your account. Please contact your manager to register your face.",
-            canUsePin: req.user.pinEnabled
+            message: `Liveness verification failed. ${livenessResult.recommendations?.[0] || 'Please ensure you are using a live camera feed.'}`,
+            canUsePin: req.user.pinEnabled,
+            livenessScore: livenessResult.livenessScore,
+            recommendations: livenessResult.recommendations
           });
         }
-        
-        // If client provided descriptor and we have stored embedding, verify quickly via vector distance first
-        if (Array.isArray(descriptor) && Array.isArray(req.user.faceEmbedding)) {
-          try {
-            // Normalize embeddings then compute distance
-            const normalize = (v: number[]) => {
-              const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
-              return v.map(x => x / norm);
-            };
-            const reg = normalize(req.user.faceEmbedding as number[]);
-            const probe = normalize(descriptor as number[]);
-            const dist = calculateEuclideanDistance(reg, probe);
-            const threshold = 0.6;
-            if (dist <= threshold) {
-              // Fast-path success; continue to attendance creation
-              console.log(`Fast-path descriptor verification passed: distance ${dist}`);
-              const faceConfidence = Math.max(0, 100 - (dist * 100));
-              await AuditLogger.logFaceVerification(
-                req.user!.id,
-                req.user!.organizationId,
-                true,
-                {
-                  faceConfidence,
-                  livenessScore: livenessResult.livenessScore,
-                  locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
-                  locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
-                  deviceInfo,
-                  metadata: { action, distance: dist, threshold }
-                }
-              );
-              // Attendance
-              let attendanceRecord;
-              if (action === 'out') {
-                const today = new Date().toISOString().split('T')[0];
-                const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
-                if (!todayRecord || todayRecord.clockOutTime) {
-                  return res.status(400).json({
-                    verified: false,
-                    message: "No active clock-in found for today or already clocked out.",
-                    canUsePin: req.user.pinEnabled
-                  });
-                }
-                attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, { clockOutTime: new Date() });
-              } else {
-                attendanceRecord = await storage.createAttendanceRecord({
-                  userId: req.user.id,
-                  organizationId: req.user.organizationId,
-                  clockInTime: new Date(),
-                  date: new Date().toISOString().split('T')[0],
-                });
-              }
-              return res.json({
-                verified: true,
-                distance: dist,
-                threshold,
-                faceConfidence,
+
+        console.log(`Liveness detection passed with score: ${livenessResult.livenessScore}`);
+
+        // Step 3: Face Recognition
+        console.log(`Starting face recognition for ${req.user.email}`);
+
+        try {
+          const capturedImage = imageData;
+          const registeredFaceImage = req.user.faceImageUrl;
+
+          if (!registeredFaceImage) {
+            await AuditLogger.logFaceVerification(
+              req.user!.id,
+              req.user!.organizationId,
+              false,
+              {
+                locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+                locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
                 livenessScore: livenessResult.livenessScore,
-                action: action || 'in',
-                message: `Face verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`,
-                attendance: attendanceRecord
-              });
-            }
-            console.log(`Fast-path descriptor verification failed: distance ${dist}, falling back to DeepFace`);
-          } catch (e) {
-            console.warn('Descriptor fast-path failed:', e);
-          }
-        }
+                deviceInfo,
+                failureReason: "No face template found",
+                metadata: { action }
+              }
+            );
 
-        console.log(`Comparing captured image using InsightFace embeddings (fallback to DeepFace image-verify)`);
-        // Attempt InsightFace embedding for captured image and compare to stored embedding centroid
-        if (req.user.faceEmbedding && Array.isArray(req.user.faceEmbedding)) {
-          try {
-            const { spawn } = await import('child_process');
-            const pythonCmd = getPythonCommand();
-            const capturedEmbeddingResult = await new Promise<{ success: boolean; embedding?: number[]; error?: string }>((resolve) => {
-              const pythonProcess = spawn(pythonCmd, ['server/insightface_embed.py'], {
-                stdio: ['pipe', 'pipe', 'pipe'],
-                env: getPythonEnv()
-              });
-              let output = ''; let errorOutput = '';
-              pythonProcess.on('error', (error) => resolve({ success: false, error: error.message }));
-              pythonProcess.stdout.on('data', (d) => (output += d.toString()));
-              pythonProcess.stderr.on('data', (d) => (errorOutput += d.toString()));
-              pythonProcess.on('close', (code) => {
-                if (code === 0) {
-                  try {
-                    const result = JSON.parse(output);
-                    if (result.success && Array.isArray(result.embedding)) return resolve({ success: true, embedding: result.embedding });
-                    return resolve({ success: false, error: result.error || 'Unknown embedding error' });
-                  } catch {
-                    return resolve({ success: false, error: `Invalid response: ${output}` });
-                  }
-                }
-                return resolve({ success: false, error: errorOutput || 'Embedding process failed' });
-              });
-              const inputData = JSON.stringify({ cmd: 'embed', image: capturedImage });
-              pythonProcess.stdin.write(inputData);
-              pythonProcess.stdin.end();
+            return res.status(400).json({
+              verified: false,
+              message: "No face template found for your account. Please contact your manager to register your face.",
+              canUsePin: req.user.pinEnabled
             });
+          }
 
-            if (capturedEmbeddingResult.success && capturedEmbeddingResult.embedding) {
-              // Compare using cosine/euclidean (embeddings are L2-normalized 512D typically)
-              const reg = req.user.faceEmbedding as number[];
-              const probe = capturedEmbeddingResult.embedding;
+          // If client provided descriptor and we have stored embedding, verify quickly via vector distance first
+          if (Array.isArray(descriptor) && Array.isArray(req.user.faceEmbedding)) {
+            try {
+              // Normalize embeddings then compute distance
               const normalize = (v: number[]) => {
                 const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
                 return v.map(x => x / norm);
               };
-              const distance = calculateEuclideanDistance(normalize(reg), normalize(probe));
-              const threshold = 0.85; // InsightFace euclidean on normalized vectors (tunable)
-              if (distance <= threshold) {
-                const faceConfidence = Math.max(0, 100 - (distance * 100));
+              const reg = normalize(req.user.faceEmbedding as number[]);
+              const probe = normalize(descriptor as number[]);
+              const dist = calculateEuclideanDistance(reg, probe);
+              const threshold = 0.6;
+              if (dist <= threshold) {
+                // Fast-path success; continue to attendance creation
+                console.log(`Fast-path descriptor verification passed: distance ${dist}`);
+                const faceConfidence = Math.max(0, 100 - (dist * 100));
                 await AuditLogger.logFaceVerification(
                   req.user!.id,
                   req.user!.organizationId,
@@ -1803,322 +1767,417 @@ export function registerRoutes(app: Express): Server {
                     locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
                     locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
                     deviceInfo,
-                    metadata: { action, distance, threshold, engine: 'insightface' }
+                    metadata: { action, distance: dist, threshold }
                   }
                 );
+                // Attendance
                 let attendanceRecord;
                 if (action === 'out') {
                   const today = new Date().toISOString().split('T')[0];
                   const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
                   if (!todayRecord || todayRecord.clockOutTime) {
-                    return res.status(400).json({ verified: false, message: "No active clock-in found for today or already clocked out.", canUsePin: req.user.pinEnabled });
+                    return res.status(400).json({
+                      verified: false,
+                      message: "No active clock-in found for today or already clocked out.",
+                      canUsePin: req.user.pinEnabled
+                    });
                   }
                   attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, { clockOutTime: new Date() });
                 } else {
-                  attendanceRecord = await storage.createAttendanceRecord({ userId: req.user.id, organizationId: req.user.organizationId, clockInTime: new Date(), date: new Date().toISOString().split('T')[0] });
+                  attendanceRecord = await storage.createAttendanceRecord({
+                    userId: req.user.id,
+                    organizationId: req.user.organizationId,
+                    clockInTime: new Date(),
+                    date: new Date().toISOString().split('T')[0],
+                  });
                 }
-                return res.json({ verified: true, distance, threshold, faceConfidence, livenessScore: livenessResult.livenessScore, action: action || 'in', message: `Face verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`, attendance: attendanceRecord });
+                return res.json({
+                  verified: true,
+                  distance: dist,
+                  threshold,
+                  faceConfidence,
+                  livenessScore: livenessResult.livenessScore,
+                  action: action || 'in',
+                  message: `Face verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`,
+                  attendance: attendanceRecord
+                });
               }
-              console.log(`InsightFace embedding comparison failed: distance ${distance}, fallback to DeepFace`);
+              console.log(`Fast-path descriptor verification failed: distance ${dist}, falling back to DeepFace`);
+            } catch (e) {
+              console.warn('Descriptor fast-path failed:', e);
             }
-          } catch (e) {
-            console.warn('InsightFace compare failed, fallback to DeepFace:', e);
           }
-        }
 
-        console.log(`Comparing captured image using AWS Rekognition`);
-        
-        // Face comparison using AWS Rekognition
-        const verificationResult = await verifyFace(capturedImage, req.user.id);
-        
-        console.log(`=== AWS REKOGNITION VERIFICATION RESULT ===`);
-        console.log(`User: ${req.user.email}`);
-        console.log(`Liveness Score: ${livenessResult.livenessScore}`);
-        console.log(`Face Match: ${verificationResult.verified ? 'PASS' : 'FAIL'}`);
-        console.log(`Similarity: ${verificationResult.similarity}`);
-        console.log(`===========================================`);
-        
-        const faceConfidence = verificationResult.similarity || 0;
-        
-        if (verificationResult.verified) {
-          console.log(`✓ Face verification successful for ${req.user.email}`);
-          
-          // Log successful verification
-          await AuditLogger.logFaceVerification(
-            req.user!.id,
-            req.user!.organizationId,
-            true,
-            {
-              faceConfidence,
-              livenessScore: livenessResult.livenessScore,
-              locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
-              locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
-              deviceInfo,
-              metadata: { 
-                action,
-                similarity: verificationResult.similarity,
-                engine: 'AWS Rekognition',
-                analysis: livenessResult.analysis
+          console.log(`Comparing captured image using InsightFace embeddings (fallback to DeepFace image-verify)`);
+          // Attempt InsightFace embedding for captured image and compare to stored embedding centroid
+          if (req.user.faceEmbedding && Array.isArray(req.user.faceEmbedding)) {
+            try {
+              const { spawn } = await import('child_process');
+              const pythonCmd = getPythonCommand();
+              const capturedEmbeddingResult = await new Promise<{ success: boolean; embedding?: number[]; error?: string }>((resolve) => {
+                const pythonProcess = spawn(pythonCmd, ['server/insightface_embed.py'], {
+                  stdio: ['pipe', 'pipe', 'pipe'],
+                  env: getPythonEnv()
+                });
+                let output = ''; let errorOutput = '';
+                pythonProcess.on('error', (error) => resolve({ success: false, error: error.message }));
+                pythonProcess.stdout.on('data', (d) => (output += d.toString()));
+                pythonProcess.stderr.on('data', (d) => (errorOutput += d.toString()));
+                pythonProcess.on('close', (code) => {
+                  if (code === 0) {
+                    try {
+                      const result = JSON.parse(output);
+                      if (result.success && Array.isArray(result.embedding)) return resolve({ success: true, embedding: result.embedding });
+                      return resolve({ success: false, error: result.error || 'Unknown embedding error' });
+                    } catch {
+                      return resolve({ success: false, error: `Invalid response: ${output}` });
+                    }
+                  }
+                  return resolve({ success: false, error: errorOutput || 'Embedding process failed' });
+                });
+                const inputData = JSON.stringify({ cmd: 'embed', image: capturedImage });
+                pythonProcess.stdin.write(inputData);
+                pythonProcess.stdin.end();
+              });
+
+              if (capturedEmbeddingResult.success && capturedEmbeddingResult.embedding) {
+                // Compare using cosine/euclidean (embeddings are L2-normalized 512D typically)
+                const reg = req.user.faceEmbedding as number[];
+                const probe = capturedEmbeddingResult.embedding;
+                const normalize = (v: number[]) => {
+                  const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
+                  return v.map(x => x / norm);
+                };
+                const distance = calculateEuclideanDistance(normalize(reg), normalize(probe));
+                const threshold = 0.85; // InsightFace euclidean on normalized vectors (tunable)
+                if (distance <= threshold) {
+                  const faceConfidence = Math.max(0, 100 - (distance * 100));
+                  await AuditLogger.logFaceVerification(
+                    req.user!.id,
+                    req.user!.organizationId,
+                    true,
+                    {
+                      faceConfidence,
+                      livenessScore: livenessResult.livenessScore,
+                      locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+                      locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+                      deviceInfo,
+                      metadata: { action, distance, threshold, engine: 'insightface' }
+                    }
+                  );
+                  let attendanceRecord;
+                  if (action === 'out') {
+                    const today = new Date().toISOString().split('T')[0];
+                    const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
+                    if (!todayRecord || todayRecord.clockOutTime) {
+                      return res.status(400).json({ verified: false, message: "No active clock-in found for today or already clocked out.", canUsePin: req.user.pinEnabled });
+                    }
+                    attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, { clockOutTime: new Date() });
+                  } else {
+                    attendanceRecord = await storage.createAttendanceRecord({ userId: req.user.id, organizationId: req.user.organizationId, clockInTime: new Date(), date: new Date().toISOString().split('T')[0] });
+                  }
+                  return res.json({ verified: true, distance, threshold, faceConfidence, livenessScore: livenessResult.livenessScore, action: action || 'in', message: `Face verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`, attendance: attendanceRecord });
+                }
+                console.log(`InsightFace embedding comparison failed: distance ${distance}, fallback to DeepFace`);
               }
+            } catch (e) {
+              console.warn('InsightFace compare failed, fallback to DeepFace:', e);
             }
-          );
-          
-          // Create attendance record based on action
-          let attendanceRecord;
-          if (action === 'out') {
-            const today = new Date().toISOString().split('T')[0];
-            const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
-            
-            if (!todayRecord || todayRecord.clockOutTime) {
-              return res.status(400).json({
-                verified: false,
-                message: "No active clock-in found for today or already clocked out.",
-                canUsePin: req.user.pinEnabled
+          }
+
+          console.log(`Comparing captured image using AWS Rekognition`);
+
+          // Face comparison using AWS Rekognition
+          const verificationResult = await verifyFace(capturedImage, req.user.id);
+
+          console.log(`=== AWS REKOGNITION VERIFICATION RESULT ===`);
+          console.log(`User: ${req.user.email}`);
+          console.log(`Liveness Score: ${livenessResult.livenessScore}`);
+          console.log(`Face Match: ${verificationResult.verified ? 'PASS' : 'FAIL'}`);
+          console.log(`Similarity: ${verificationResult.similarity}`);
+          console.log(`===========================================`);
+
+          const faceConfidence = verificationResult.similarity || 0;
+
+          if (verificationResult.verified) {
+            console.log(`✓ Face verification successful for ${req.user.email}`);
+
+            // Log successful verification
+            await AuditLogger.logFaceVerification(
+              req.user!.id,
+              req.user!.organizationId,
+              true,
+              {
+                faceConfidence,
+                livenessScore: livenessResult.livenessScore,
+                locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+                locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+                deviceInfo,
+                metadata: {
+                  action,
+                  similarity: verificationResult.similarity,
+                  engine: 'AWS Rekognition',
+                  analysis: livenessResult.analysis
+                }
+              }
+            );
+
+            // Create attendance record based on action
+            let attendanceRecord;
+            if (action === 'out') {
+              const today = new Date().toISOString().split('T')[0];
+              const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
+
+              if (!todayRecord || todayRecord.clockOutTime) {
+                return res.status(400).json({
+                  verified: false,
+                  message: "No active clock-in found for today or already clocked out.",
+                  canUsePin: req.user.pinEnabled
+                });
+              }
+
+              attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, {
+                clockOutTime: new Date(),
+              });
+            } else {
+              attendanceRecord = await storage.createAttendanceRecord({
+                userId: req.user.id,
+                organizationId: req.user.organizationId,
+                clockInTime: new Date(),
+                date: new Date().toISOString().split('T')[0],
               });
             }
-            
-            attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, {
-              clockOutTime: new Date(),
+
+            res.json({
+              verified: true,
+              similarity: verificationResult.similarity,
+              confidence: verificationResult.confidence,
+              faceConfidence,
+              livenessScore: livenessResult.livenessScore,
+              action: action || 'in',
+              message: `Face verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`,
+              attendance: attendanceRecord,
+              recommendations: verificationResult.recommendations
             });
           } else {
-            attendanceRecord = await storage.createAttendanceRecord({
-              userId: req.user.id,
-              organizationId: req.user.organizationId,
-              clockInTime: new Date(),
-              date: new Date().toISOString().split('T')[0],
+            await AuditLogger.logFaceVerification(
+              req.user!.id,
+              req.user!.organizationId,
+              false,
+              {
+                faceConfidence,
+                livenessScore: livenessResult.livenessScore,
+                locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+                locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+                deviceInfo,
+                failureReason: "Face match failed - possible different person",
+                metadata: {
+                  action,
+                  similarity: verificationResult.similarity,
+                  engine: 'AWS Rekognition',
+                  analysis: livenessResult.analysis
+                }
+              }
+            );
+
+            console.log(`✗ Face verification REJECTED for ${req.user.email}`);
+            return res.status(400).json({
+              verified: false,
+              similarity: verificationResult.similarity,
+              faceConfidence,
+              livenessScore: livenessResult.livenessScore,
+              message: `Face verification failed. ${verificationResult.recommendations?.[0] || 'Please try again with better lighting.'}`,
+              canUsePin: req.user.pinEnabled,
+              recommendations: verificationResult.recommendations,
+              technical_details: {
+                similarity: verificationResult.similarity?.toFixed(4),
+                livenessScore: livenessResult.livenessScore
+              }
             });
           }
-
-          res.json({
-            verified: true,
-            similarity: verificationResult.similarity,
-            confidence: verificationResult.confidence,
-            faceConfidence,
-            livenessScore: livenessResult.livenessScore,
-            action: action || 'in',
-            message: `Face verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`,
-            attendance: attendanceRecord,
-            recommendations: verificationResult.recommendations
-          });
-        } else {
+        } catch (error) {
           await AuditLogger.logFaceVerification(
             req.user!.id,
             req.user!.organizationId,
             false,
             {
-              faceConfidence,
-              livenessScore: livenessResult.livenessScore,
               locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
               locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+              livenessScore: livenessResult.livenessScore,
               deviceInfo,
-              failureReason: "Face match failed - possible different person",
-              metadata: { 
-                action,
-                similarity: verificationResult.similarity,
-                engine: 'AWS Rekognition',
-                analysis: livenessResult.analysis
-              }
+              failureReason: `Face verification service error: ${error.message}`,
+              metadata: { action }
             }
           );
-          
-          console.log(`✗ Face verification REJECTED for ${req.user.email}`);
-          return res.status(400).json({
+
+          console.error("Face verification error:", error);
+          return res.status(500).json({
             verified: false,
-            similarity: verificationResult.similarity,
-            faceConfidence,
-            livenessScore: livenessResult.livenessScore,
-            message: `Face verification failed. ${verificationResult.recommendations?.[0] || 'Please try again with better lighting.'}`,
-            canUsePin: req.user.pinEnabled,
-            recommendations: verificationResult.recommendations,
-            technical_details: {
-              similarity: verificationResult.similarity?.toFixed(4),
-              livenessScore: livenessResult.livenessScore
-            }
+            message: "Face verification service unavailable",
+            canUsePin: req.user.pinEnabled
           });
         }
       } catch (error) {
-        await AuditLogger.logFaceVerification(
+        console.error("Face verification error:", error);
+        return res.status(500).json({
+          message: "Face verification failed",
+          canUsePin: req.user?.pinEnabled || false
+        });
+      }
+    });
+
+  // PIN Authentication endpoints
+  app.post("/api/setup-pin",
+    requireAuth,
+    createRateLimitMiddleware('pinSetup'),
+    async (req, res) => {
+      try {
+        const validation = setupPinSchema.safeParse(req.body);
+
+        if (!validation.success) {
+          return res.status(400).json({
+            message: "Invalid PIN format",
+            errors: validation.error.errors
+          });
+        }
+
+        const { pin } = validation.data;
+        const hashedPin = await hashPassword(pin);
+
+        await storage.updateUserPin(req.user!.id, hashedPin);
+
+        res.json({
+          message: "PIN set up successfully",
+          pinEnabled: true
+        });
+      } catch (error) {
+        console.error("PIN setup error:", error);
+        res.status(500).json({ message: "Failed to set up PIN" });
+      }
+    });
+
+  app.post("/api/verify-pin",
+    requireAuth,
+    createAuthRateLimitMiddleware('pinVerification'),
+    async (req, res) => {
+      try {
+        const { pin, location, userLocation, action } = req.body;
+        const finalLocation = location || userLocation;
+        const deviceInfo = AuditLogger.extractDeviceInfo(req);
+
+        const validation = verifyPinSchema.safeParse({ pin });
+
+        if (!validation.success) {
+          await AuditLogger.logPinVerification(
+            req.user!.id,
+            req.user!.organizationId,
+            false,
+            {
+              deviceInfo,
+              failureReason: "Invalid PIN format",
+              metadata: { action }
+            }
+          );
+
+          return res.status(400).json({
+            message: "Invalid PIN format",
+            errors: validation.error.errors
+          });
+        }
+
+        if (!req.user!.pinEnabled || !req.user!.pinHash) {
+          await AuditLogger.logPinVerification(
+            req.user!.id,
+            req.user!.organizationId,
+            false,
+            {
+              deviceInfo,
+              failureReason: "PIN not enabled for user",
+              metadata: { action }
+            }
+          );
+
+          return res.status(400).json({
+            message: "PIN authentication not enabled for your account"
+          });
+        }
+
+        const isValidPin = await comparePasswords(pin, req.user!.pinHash);
+
+        if (!isValidPin) {
+          await AuditLogger.logPinVerification(
+            req.user!.id,
+            req.user!.organizationId,
+            false,
+            {
+              deviceInfo,
+              failureReason: "Invalid PIN provided",
+              metadata: { action }
+            }
+          );
+
+          return res.status(400).json({
+            message: "Invalid PIN. Please try again.",
+            verified: false
+          });
+        }
+
+        // Log successful PIN verification
+        await AuditLogger.logPinVerification(
           req.user!.id,
           req.user!.organizationId,
-          false,
+          true,
           {
             locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
             locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
-            livenessScore: livenessResult.livenessScore,
             deviceInfo,
-            failureReason: `Face verification service error: ${error.message}`,
             metadata: { action }
           }
         );
-        
-        console.error("Face verification error:", error);
-        return res.status(500).json({
-          verified: false,
-          message: "Face verification service unavailable",
-          canUsePin: req.user.pinEnabled
-        });
-      }
-    } catch (error) {
-      console.error("Face verification error:", error);
-      return res.status(500).json({ 
-        message: "Face verification failed",
-        canUsePin: req.user?.pinEnabled || false
-      });
-    }
-  });
 
-  // PIN Authentication endpoints
-  app.post("/api/setup-pin", 
-    requireAuth, 
-    createRateLimitMiddleware('pinSetup'), 
-    async (req, res) => {
-    try {
-      const validation = setupPinSchema.safeParse(req.body);
-      
-      if (!validation.success) {
-        return res.status(400).json({
-          message: "Invalid PIN format",
-          errors: validation.error.errors
-        });
-      }
+        // Update last PIN used timestamp
+        await db.update(users)
+          .set({ lastPinUsed: new Date() })
+          .where(eq(users.id, req.user!.id));
 
-      const { pin } = validation.data;
-      const hashedPin = await hashPassword(pin);
-      
-      await storage.updateUserPin(req.user!.id, hashedPin);
-      
-      res.json({ 
-        message: "PIN set up successfully",
-        pinEnabled: true
-      });
-    } catch (error) {
-      console.error("PIN setup error:", error);
-      res.status(500).json({ message: "Failed to set up PIN" });
-    }
-  });
+        // Create attendance record based on action
+        let attendanceRecord;
+        if (action === 'out') {
+          const today = new Date().toISOString().split('T')[0];
+          const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
 
-  app.post("/api/verify-pin", 
-    requireAuth, 
-    createAuthRateLimitMiddleware('pinVerification'), 
-    async (req, res) => {
-    try {
-      const { pin, location, userLocation, action } = req.body;
-      const finalLocation = location || userLocation;
-      const deviceInfo = AuditLogger.extractDeviceInfo(req);
-      
-      const validation = verifyPinSchema.safeParse({ pin });
-      
-      if (!validation.success) {
-        await AuditLogger.logPinVerification(
-          req.user!.id,
-          req.user!.organizationId,
-          false,
-          {
-            deviceInfo,
-            failureReason: "Invalid PIN format",
-            metadata: { action }
+          if (!todayRecord || todayRecord.clockOutTime) {
+            return res.status(400).json({
+              verified: false,
+              message: "No active clock-in found for today or already clocked out."
+            });
           }
-        );
-        
-        return res.status(400).json({
-          message: "Invalid PIN format",
-          errors: validation.error.errors
-        });
-      }
 
-      if (!req.user!.pinEnabled || !req.user!.pinHash) {
-        await AuditLogger.logPinVerification(
-          req.user!.id,
-          req.user!.organizationId,
-          false,
-          {
-            deviceInfo,
-            failureReason: "PIN not enabled for user",
-            metadata: { action }
-          }
-        );
-        
-        return res.status(400).json({
-          message: "PIN authentication not enabled for your account"
-        });
-      }
-
-      const isValidPin = await comparePasswords(pin, req.user!.pinHash);
-      
-      if (!isValidPin) {
-        await AuditLogger.logPinVerification(
-          req.user!.id,
-          req.user!.organizationId,
-          false,
-          {
-            deviceInfo,
-            failureReason: "Invalid PIN provided",
-            metadata: { action }
-          }
-        );
-        
-        return res.status(400).json({
-          message: "Invalid PIN. Please try again.",
-          verified: false
-        });
-      }
-
-      // Log successful PIN verification
-      await AuditLogger.logPinVerification(
-        req.user!.id,
-        req.user!.organizationId,
-        true,
-        {
-          locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
-          locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
-          deviceInfo,
-          metadata: { action }
-        }
-      );
-
-      // Update last PIN used timestamp
-      await db.update(users)
-        .set({ lastPinUsed: new Date() })
-        .where(eq(users.id, req.user!.id));
-
-      // Create attendance record based on action
-      let attendanceRecord;
-      if (action === 'out') {
-        const today = new Date().toISOString().split('T')[0];
-        const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
-        
-        if (!todayRecord || todayRecord.clockOutTime) {
-          return res.status(400).json({
-            verified: false,
-            message: "No active clock-in found for today or already clocked out."
+          attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, {
+            clockOutTime: new Date(),
+          });
+        } else {
+          attendanceRecord = await storage.createAttendanceRecord({
+            userId: req.user.id,
+            organizationId: req.user.organizationId,
+            clockInTime: new Date(),
+            date: new Date().toISOString().split('T')[0],
+            checkInMethod: 'pin'
           });
         }
-        
-        attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, {
-          clockOutTime: new Date(),
-        });
-      } else {
-        attendanceRecord = await storage.createAttendanceRecord({
-          userId: req.user.id,
-          organizationId: req.user.organizationId,
-          clockInTime: new Date(),
-          date: new Date().toISOString().split('T')[0],
-          checkInMethod: 'pin'
-        });
-      }
 
-      res.json({
-        verified: true,
-        action: action || 'in',
-        message: `PIN verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`,
-        attendance: attendanceRecord,
-        method: 'pin'
-      });
-    } catch (error) {
-      console.error("PIN verification error:", error);
-      res.status(500).json({ message: "PIN verification failed" });
-    }
-  });
+        res.json({
+          verified: true,
+          action: action || 'in',
+          message: `PIN verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`,
+          attendance: attendanceRecord,
+          method: 'pin'
+        });
+      } catch (error) {
+        console.error("PIN verification error:", error);
+        res.status(500).json({ message: "PIN verification failed" });
+      }
+    });
 
   // Audit logging endpoints for managers/admins
   app.get("/api/audit-logs", requireAuth, async (req, res) => {
@@ -2128,7 +2187,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       const { userId, limit = 50, offset = 0, verificationType, success, startDate, endDate } = req.query;
-      
+
       const logs = await AuditLogger.getOrganizationAuditLogs(
         req.user!.organizationId,
         parseInt(limit as string),
@@ -2157,7 +2216,7 @@ export function registerRoutes(app: Express): Server {
 
       const { userId } = req.params;
       const { limit = 50, offset = 0 } = req.query;
-      
+
       const logs = await AuditLogger.getUserAuditLogs(
         parseInt(userId),
         req.user!.organizationId,
@@ -2179,7 +2238,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       const alerts = await AuditLogger.generateSecurityAlerts(req.user!.organizationId);
-      
+
       res.json({ alerts });
     } catch (error) {
       console.error("Get security alerts error:", error);
@@ -2196,7 +2255,7 @@ export function registerRoutes(app: Express): Server {
 
       const { hours = '24' } = req.query;
       const anomalies = await AnomalyDetection.runAnomalyDetection(req.user!.organizationId);
-      
+
       res.json({ anomalies });
     } catch (error) {
       console.error("Get anomalies error:", error);
@@ -2211,7 +2270,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       const metrics = await AnomalyDetection.generateSecurityMetrics(req.user!.organizationId);
-      
+
       res.json({ metrics });
     } catch (error) {
       console.error("Get security metrics error:", error);
@@ -2223,7 +2282,7 @@ export function registerRoutes(app: Express): Server {
   app.get("/api/devices", requireAuth, async (req, res) => {
     try {
       const devices = await DeviceFingerprinting.getUserDevices(req.user!.id);
-      
+
       res.json({ devices });
     } catch (error) {
       console.error("Get user devices error:", error);
@@ -2234,9 +2293,9 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/devices/:fingerprint/trust", requireAuth, async (req, res) => {
     try {
       const { fingerprint } = req.params;
-      
+
       const success = await DeviceFingerprinting.trustDevice(req.user!.id, fingerprint);
-      
+
       if (success) {
         res.json({ message: "Device trusted successfully" });
       } else {
@@ -2251,9 +2310,9 @@ export function registerRoutes(app: Express): Server {
   app.delete("/api/devices/:fingerprint", requireAuth, async (req, res) => {
     try {
       const { fingerprint } = req.params;
-      
+
       const success = await DeviceFingerprinting.removeDevice(req.user!.id, fingerprint);
-      
+
       if (success) {
         res.json({ message: "Device removed successfully" });
       } else {
@@ -2268,7 +2327,7 @@ export function registerRoutes(app: Express): Server {
   app.get("/api/device-security-summary", requireAuth, async (req, res) => {
     try {
       const summary = await DeviceFingerprinting.getDeviceSecuritySummary(req.user!.id);
-      
+
       res.json({ summary });
     } catch (error) {
       console.error("Get device security summary error:", error);
@@ -2280,13 +2339,13 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/clock-in", requireAuth, async (req, res) => {
     try {
       const { locationPostcode, verified, method = "face" } = req.body;
-      
+
       if (!verified) {
         return res.status(400).json({ message: "Face verification required for check-in" });
       }
 
       const today = format(new Date(), "yyyy-MM-dd");
-      
+
       // Check if user has any active (unclosed) sessions today
       const records = await storage.getUserAttendanceRecords(req.user!.id, 20);
       const todayRecords = records.filter(record => record.date === today);
@@ -2322,11 +2381,11 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/clock-out", requireAuth, async (req, res) => {
     try {
       const today = format(new Date(), "yyyy-MM-dd");
-      
+
       // Get all attendance records and find the most recent one without clock-out
       const records = await storage.getUserAttendanceRecords(req.user!.id, 20);
       const todayRecords = records.filter(record => record.date === today);
-      
+
       // Find the most recent record that doesn't have a clock-out time
       const activeRecord = todayRecords
         .sort((a, b) => new Date(b.clockInTime).getTime() - new Date(a.clockInTime).getTime())
@@ -2362,7 +2421,7 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/manual-clock-in", requireManager, async (req, res) => {
     try {
       const { userId, date, clockInTime, locationId, notes } = req.body;
-      
+
       const attendanceRecord = await storage.createAttendanceRecord({
         userId,
         organizationId: req.user!.organizationId,
@@ -2385,17 +2444,17 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/manual-clock-out", requireManager, async (req, res) => {
     try {
       const { userId, clockOutTime, notes } = req.body;
-      
+
       if (!userId) {
         return res.status(400).json({ message: "User ID is required" });
       }
 
       const today = format(new Date(), "yyyy-MM-dd");
-      
+
       // Find the most recent active record for the user
       const records = await storage.getUserAttendanceRecords(userId, 20);
       const todayRecords = records.filter(record => record.date === today);
-      
+
       // Find the most recent record that doesn't have a clock-out time
       const activeRecord = todayRecords
         .sort((a, b) => new Date(b.clockInTime).getTime() - new Date(a.clockInTime).getTime())
@@ -2432,7 +2491,7 @@ export function registerRoutes(app: Express): Server {
   app.get("/api/attendance", requireAuth, async (req, res) => {
     try {
       let records;
-      
+
       if (req.user!.role === "employee") {
         // Employees see only their own records
         records = await storage.getUserAttendanceRecords(req.user!.id, 30);
@@ -2458,11 +2517,11 @@ export function registerRoutes(app: Express): Server {
       for (const employee of employees.filter(u => u.role === 'employee')) {
         // Get last 30 days of records
         const records = await storage.getUserAttendanceRecords(employee.id, 50);
-        
+
         // Calculate this week's hours
         const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 }); // Monday
         const weekEnd = endOfWeek(new Date(), { weekStartsOn: 1 });
-        
+
         const thisWeekRecords = records.filter(record => {
           const recordDate = new Date(record.date);
           return recordDate >= weekStart && recordDate <= weekEnd && record.clockOutTime;
@@ -2479,7 +2538,7 @@ export function registerRoutes(app: Express): Server {
         // Calculate this month's hours
         const monthStart = startOfMonth(new Date());
         const monthEnd = endOfMonth(new Date());
-        
+
         const thisMonthRecords = records.filter(record => {
           const recordDate = new Date(record.date);
           return recordDate >= monthStart && recordDate <= monthEnd && record.clockOutTime;
@@ -2497,7 +2556,7 @@ export function registerRoutes(app: Express): Server {
         const today = format(new Date(), "yyyy-MM-dd");
         const todayRecords = records.filter(record => record.date === today);
         const isCurrentlyWorking = todayRecords.some(record => !record.clockOutTime);
-        
+
         const todayHours = todayRecords.reduce((total, record) => {
           if (record.clockOutTime) {
             const minutes = differenceInMinutes(new Date(record.clockOutTime), new Date(record.clockInTime));
@@ -2535,13 +2594,13 @@ export function registerRoutes(app: Express): Server {
     try {
       const employeeId = parseInt(req.params.id);
       const { period = 'week' } = req.query;
-      
+
       // Get employee info
       const employee = await storage.getUserById(employeeId);
       if (!employee) {
         return res.status(404).json({ message: "Employee not found" });
       }
-      
+
       // CRITICAL: Ensure the employee belongs to the same organization as the manager
       if (employee.organizationId !== req.user!.organizationId) {
         return res.status(403).json({ message: "Access denied - employee not in your organization" });
@@ -2568,7 +2627,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       const records = await storage.getUserAttendanceRecords(employeeId, 100);
-      
+
       const filteredRecords = records.filter(record => {
         const recordDate = new Date(record.date);
         return recordDate >= startDate && recordDate <= endDate;
@@ -2656,7 +2715,7 @@ export function registerRoutes(app: Express): Server {
   app.get("/api/analytics/personal", requireAuth, async (req, res) => {
     try {
       const { period = 'week' } = req.query;
-      
+
       let startDate: Date;
       let endDate: Date = new Date();
 
@@ -2678,7 +2737,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       const records = await storage.getUserAttendanceRecords(req.user!.id, 100);
-      
+
       const filteredRecords = records.filter(record => {
         const recordDate = new Date(record.date);
         return recordDate >= startDate && recordDate <= endDate;
@@ -2703,7 +2762,7 @@ export function registerRoutes(app: Express): Server {
 
         dayRecords.forEach(record => {
           clockInTimes.push(format(new Date(record.clockInTime), 'HH:mm:ss'));
-          
+
           if (record.clockOutTime) {
             clockOutTimes.push(format(new Date(record.clockOutTime), 'HH:mm:ss'));
             const sessionSeconds = differenceInSeconds(new Date(record.clockOutTime), new Date(record.clockInTime));
@@ -2774,12 +2833,12 @@ export function registerRoutes(app: Express): Server {
   app.get("/api/attendance/today", requireAuth, async (req, res) => {
     try {
       const today = format(new Date(), "yyyy-MM-dd");
-      
+
       // Get all records for today and check if any are still active (not clocked out)
       const records = await storage.getUserAttendanceRecords(req.user!.id, 10);
       const todayRecords = records.filter(record => record.date === today);
       const activeRecord = todayRecords.find(record => !record.clockOutTime);
-      
+
       res.json({
         record: todayRecords[0] || null, // Most recent record for today
         records: todayRecords, // All records for today
@@ -2795,7 +2854,7 @@ export function registerRoutes(app: Express): Server {
   app.delete("/api/users/:id", requireAuth, async (req, res) => {
     try {
       const userId = parseInt(req.params.id);
-      
+
       if (isNaN(userId)) {
         return res.status(400).json({ message: "Invalid user ID" });
       }
@@ -2854,7 +2913,7 @@ export function registerRoutes(app: Express): Server {
 
       // Get all users from the same organization for managers/admins to see
       const allUsers = await storage.getAllUsers(req.user!.organizationId);
-      
+
       // Remove passwords from response
       res.json(allUsers.map(toSafeUser));
     } catch (error) {
@@ -2925,7 +2984,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       const employeeId = parseInt(req.params.id);
-      
+
       // Get the employee to be deleted
       const employee = await storage.getUser(employeeId);
       if (!employee) {
@@ -2944,7 +3003,7 @@ export function registerRoutes(app: Express): Server {
 
       // Delete the employee
       await storage.deleteUser(employeeId);
-      
+
       console.log(`Employee ${employee.email} (${employee.role}) deleted by admin ${req.user!.email}`);
       res.json({ message: "Employee deleted successfully" });
     } catch (error) {
@@ -2967,7 +3026,7 @@ export function registerRoutes(app: Express): Server {
       if (role === 'manager' && req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Only admin can create manager invitations" });
       }
-      
+
       // Check if user already exists in this organization
       const existingUser = await storage.getUserByEmail(email, req.user!.organizationId);
       if (existingUser) {
@@ -3015,7 +3074,7 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/register-with-token", async (req, res) => {
     try {
       const { token, firstName, lastName, password, faceImageData } = req.body;
-      
+
       // Validate invitation token
       const invitation = await storage.getInvitationByToken(token);
       if (!invitation) {
@@ -3034,7 +3093,7 @@ export function registerRoutes(app: Express): Server {
 
       // Hash password
       const hashedPassword = await hashPassword(password);
-      
+
       // Create user with face image
       const user = await storage.createUser({
         email: invitation.email,
@@ -3059,128 +3118,19 @@ export function registerRoutes(app: Express): Server {
   });
 
   // Developer authentication route
-  app.post("/api/auth/developer-login", async (req, res) => {
+  // Organization lookup by slug (safe — does not enumerate orgs)
+  app.get("/api/org/by-slug/:slug", async (req, res) => {
     try {
-      const { email, password } = loginSchema.parse(req.body);
-      
-      // For now, use hardcoded developer credentials
-      // In production, this should be stored securely
-      const DEVELOPER_EMAIL = "developer@saas.com";
-      const DEVELOPER_PASSWORD = "dev_super_secure_2025";
-      
-      if (email !== DEVELOPER_EMAIL) {
-        return res.status(401).json({ message: "Invalid developer credentials" });
+      const orgs = await storage.getAllOrganizations();
+      const org = orgs.find(o => (o as any).slug === req.params.slug || o.domain === req.params.slug);
+      if (!org) {
+        return res.status(404).json({ message: "Organisation not found" });
       }
-      
-      const isPasswordValid = password === DEVELOPER_PASSWORD;
-      
-      if (!isPasswordValid) {
-        return res.status(401).json({ message: "Invalid developer credentials" });
-      }
-      
-      // Set session for developer
-      (req.session as any).userId = -1; // Special ID for developer
-      (req.session as any).isDeveloper = true;
-      
-      res.json({
-        id: -1,
-        email: DEVELOPER_EMAIL,
-        role: "developer",
-        firstName: "System",
-        lastName: "Developer"
-      });
+      // Return only safe public fields
+      res.json({ id: org.id, name: org.name });
     } catch (error) {
-      console.error("Developer login error:", error);
-      res.status(400).json({ message: "Login failed" });
-    }
-  });
-
-  // Organization management routes
-  // Public endpoint for organization selection
-  app.get("/api/organizations", async (req, res) => {
-    try {
-      const organizations = await storage.getAllOrganizations();
-      res.json(organizations);
-    } catch (error) {
-      console.error("Get organizations error:", error);
-      res.status(500).json({ message: "Failed to get organizations" });
-    }
-  });
-
-  // Developer-only organization management routes
-  app.get("/api/developer/organizations", requireDeveloper, async (req, res) => {
-    try {
-      const organizations = await storage.getAllOrganizations();
-      res.json(organizations);
-    } catch (error) {
-      console.error("Get developer organizations error:", error);
-      res.status(500).json({ message: "Failed to get organizations" });
-    }
-  });
-
-  app.post("/api/developer/organizations", requireDeveloper, async (req, res) => {
-    try {
-      const validatedData = insertOrganizationSchema.parse(req.body);
-      const organization = await storage.createOrganization(validatedData);
-      
-      // Create admin account for the new organization
-      // Make email unique per organization by including organization name
-      const adminEmail = `admin@${validatedData.domain || `org${organization.id}.com`}`;
-      const adminUser = {
-        email: adminEmail,
-        firstName: "Admin",
-        lastName: "User",
-        password: await hashPassword("admin123"),
-        role: "admin" as const,
-        organizationId: organization.id,
-        isActive: true
-      };
-      
-      await storage.createUser(adminUser);
-      
-      // Return organization with admin credentials
-      res.json({
-        ...organization,
-        adminCredentials: {
-          email: adminEmail,
-          password: "admin123"
-        }
-      });
-    } catch (error) {
-      console.error("Create organization error:", error);
-      res.status(500).json({ message: "Failed to create organization" });
-    }
-  });
-
-  app.patch("/api/developer/organizations/:id", requireDeveloper, async (req, res) => {
-    try {
-      const organizationId = parseInt(req.params.id);
-      const updates = req.body;
-      
-      // Remove timestamp fields that should be handled by database
-      const { createdAt, updatedAt, ...safeUpdates } = updates;
-      
-      // Convert string boolean values to actual booleans
-      if (safeUpdates.isActive !== undefined) {
-        safeUpdates.isActive = safeUpdates.isActive === "true" || safeUpdates.isActive === true;
-      }
-      
-      const organization = await storage.updateOrganization(organizationId, safeUpdates);
-      res.json(organization);
-    } catch (error) {
-      console.error("Update organization error:", error);
-      res.status(500).json({ message: "Failed to update organization" });
-    }
-  });
-
-  app.delete("/api/developer/organizations/:id", requireDeveloper, async (req, res) => {
-    try {
-      const organizationId = parseInt(req.params.id);
-      await storage.deleteOrganization(organizationId);
-      res.json({ message: "Organization deleted successfully" });
-    } catch (error) {
-      console.error("Delete organization error:", error);
-      res.status(500).json({ message: "Failed to delete organization" });
+      console.error("Org lookup error:", error);
+      res.status(500).json({ message: "Failed to look up organisation" });
     }
   });
 

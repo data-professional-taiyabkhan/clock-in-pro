@@ -267,16 +267,10 @@ npm run aws:test
 npm run check
 ```
 
-## 📄 Documentation
-
-- `START_HERE.md` - Complete AWS setup guide
-- `AWS_MIGRATION_COMPLETE.md` - Migration summary
-- `AWS_ARCHITECTURE.md` - Architecture details
-- `AWS_COMPLETE_GUIDE.md` - Comprehensive AWS guide
 
 ## 🎉 Changelog
 
-### Latest (December 2024)
+### Latest (November 2025)
 - ✅ **Migrated to AWS**: Replaced Python/DeepFace with AWS Rekognition
 - ✅ **Cloud Storage**: Face images stored in AWS S3
 - ✅ **99.9% Accuracy**: Enterprise-grade face recognition

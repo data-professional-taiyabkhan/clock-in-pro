@@ -2,15 +2,18 @@ import React from "react";
 import { Route, Switch } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
-import Home from "@/pages/home";
+import LandingPage from "@/pages/landing-page";
 import LoginPage from "@/pages/login-page";
+import SignupPage from "@/pages/signup-page";
+import PricingPage from "@/pages/pricing-page";
+import SecurityPage from "@/pages/security-page";
+import PrivacyPage from "@/pages/privacy-page";
+import TermsPage from "@/pages/terms-page";
 import EmployeeDashboard from "@/pages/employee-dashboard";
 import ManagerDashboard from "@/pages/manager-dashboard";
 import AdminDashboard from "@/pages/admin-dashboard";
-import SecurityTestPage from "@/pages/security-test";
-import DeveloperLogin from "@/pages/developer-login";
-import DeveloperDashboard from "@/pages/developer-dashboard";
 import NotFound from "@/pages/not-found";
+import { SubscriptionGate } from "@/components/subscription-gate";
 import { useQuery } from "@tanstack/react-query";
 
 const queryClient = new QueryClient();
@@ -31,30 +34,36 @@ function Router() {
 
   return (
     <Switch>
-      <Route path="/security-test" component={SecurityTestPage} />
-      <Route path="/developer-login" component={DeveloperLogin} />
-      <Route path="/developer" component={DeveloperDashboard} />
-      <Route path="/developer-dashboard" component={DeveloperDashboard} />
+      {/* Public marketing pages (always accessible) */}
+      <Route path="/pricing" component={PricingPage} />
+      <Route path="/security" component={SecurityPage} />
+      <Route path="/privacy" component={PrivacyPage} />
+      <Route path="/terms" component={TermsPage} />
+
       {!user ? (
         <>
-          <Route path="/" component={Home} />
+          <Route path="/" component={LandingPage} />
           <Route path="/login" component={LoginPage} />
+          <Route path="/signup" component={SignupPage} />
         </>
       ) : (
         <>
           <Route path="/" component={() => {
             const userRole = (user as any)?.role;
-            console.log("User role detected:", userRole);
-            
-            if (userRole === "employee") {
-              return <EmployeeDashboard />;
-            } else if (userRole === "admin") {
-              return <AdminDashboard />;
-            } else if (userRole === "manager") {
-              return <ManagerDashboard />;
-            } else {
-              return <ManagerDashboard />; // Default fallback
-            }
+
+            return (
+              <SubscriptionGate>
+                {userRole === "employee" ? (
+                  <EmployeeDashboard />
+                ) : userRole === "admin" ? (
+                  <AdminDashboard />
+                ) : userRole === "manager" ? (
+                  <ManagerDashboard />
+                ) : (
+                  <ManagerDashboard />
+                )}
+              </SubscriptionGate>
+            );
           }} />
         </>
       )}

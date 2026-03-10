@@ -5,9 +5,19 @@ dotenv.config();
 
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
+import { registerBillingRoutes } from "./routes/billing.routes";
+import { registerPinRoutes } from "./routes/pin.routes";
+import { requireActiveSubscription } from "./middleware/entitlement";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
+
+// Raw body parsing for Stripe webhooks (must be before express.json)
+app.use("/api/billing/webhook", express.raw({ type: "application/json" }), (req: any, _res, next) => {
+  req.rawBody = req.body;
+  next();
+});
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: false, limit: '50mb' }));
 
@@ -43,6 +53,15 @@ app.use((req, res, next) => {
 
 (async () => {
   const server = await registerRoutes(app);
+
+  // Register billing routes (Stripe checkout, webhooks, portal)
+  registerBillingRoutes(app);
+
+  // Register PIN and consent routes
+  registerPinRoutes(app);
+
+  // Apply entitlement enforcement to all subsequent API routes
+  app.use("/api", requireActiveSubscription);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

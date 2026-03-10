@@ -13,10 +13,13 @@ import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// Organizations table - for multi-tenant support
+// ──────────────────────────────────────────────
+// Organizations
+// ──────────────────────────────────────────────
 export const organizations = pgTable("organizations", {
   id: serial("id").primaryKey(),
   name: varchar("name").notNull(),
+  slug: varchar("slug").unique(), // URL-friendly identifier for login
   domain: varchar("domain").unique(), // Optional custom domain
   industry: varchar("industry"),
   size: varchar("size"),
@@ -25,31 +28,40 @@ export const organizations = pgTable("organizations", {
   currentEmployees: integer("current_employees").default(0),
   maxEmployees: integer("max_employees").default(100),
   isActive: boolean("is_active").default(true),
+  // Trial
+  trialEndsAt: timestamp("trial_ends_at"), // null = no trial set; compared to now()
+  // Face/biometric settings
+  faceEnabled: boolean("face_enabled").default(true),
+  faceRetentionDays: integer("face_retention_days").default(365),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// User storage table - redesigned for attendance system
+// ──────────────────────────────────────────────
+// Users
+// ──────────────────────────────────────────────
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: varchar("email").notNull(),
   firstName: varchar("first_name").notNull(),
   lastName: varchar("last_name").notNull(),
   password: varchar("password").notNull(),
-  role: varchar("role").notNull().default("employee"), // employee, manager, admin, developer
+  role: varchar("role").notNull().default("employee"), // employee, manager, admin
   organizationId: integer("organization_id").references(() => organizations.id),
-  faceImageUrl: varchar("face_image_url"), // Simple face image for recognition
-  faceEmbedding: json("face_embedding"), // Face embedding for recognition (backup)
-  // faceEmbeddingVector: text("face_embedding_vector"), // pgvector face embedding for similarity search - temporarily disabled
-  // pinHash: varchar("pin_hash"), // Hashed PIN for backup authentication - temporarily disabled
-  // pinEnabled: boolean("pin_enabled").default(false), // temporarily disabled
-  // lastPinUsed: timestamp("last_pin_used"), // temporarily disabled
+  faceImageUrl: varchar("face_image_url"),
+  faceEmbedding: json("face_embedding"),
+  // PIN backup authentication
+  pinHash: varchar("pin_hash"),
+  pinEnabled: boolean("pin_enabled").default(false),
+  lastPinUsed: timestamp("last_pin_used"),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Location settings for check-in restrictions
+// ──────────────────────────────────────────────
+// Locations
+// ──────────────────────────────────────────────
 export const locations = pgTable("locations", {
   id: serial("id").primaryKey(),
   organizationId: integer("organization_id").notNull().references(() => organizations.id),
@@ -58,11 +70,14 @@ export const locations = pgTable("locations", {
   address: text("address"),
   latitude: varchar("latitude"),
   longitude: varchar("longitude"),
-  radiusMeters: integer("radius_meters").default(100), // Check-in radius
+  radiusMeters: integer("radius_meters").default(100),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// ──────────────────────────────────────────────
+// Attendance Records
+// ──────────────────────────────────────────────
 export const attendanceRecords = pgTable("attendance_records", {
   id: serial("id").primaryKey(),
   organizationId: integer("organization_id").notNull().references(() => organizations.id),
@@ -78,7 +93,9 @@ export const attendanceRecords = pgTable("attendance_records", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Audit logging for all verification attempts
+// ──────────────────────────────────────────────
+// Attendance Verification Logs
+// ──────────────────────────────────────────────
 export const attendanceVerificationLogs = pgTable("attendance_verification_logs", {
   id: serial("id").primaryKey(),
   organizationId: integer("organization_id").notNull().references(() => organizations.id),
@@ -86,16 +103,19 @@ export const attendanceVerificationLogs = pgTable("attendance_verification_logs"
   attemptTime: timestamp("attempt_time").defaultNow(),
   verificationType: varchar("verification_type").notNull(), // 'face' | 'pin'
   success: boolean("success").notNull(),
-  faceConfidence: real("face_confidence"), // 0-100 score
-  livenessScore: real("liveness_score"), // 0-100 score
+  faceConfidence: real("face_confidence"),
+  livenessScore: real("liveness_score"),
   locationLatitude: real("location_latitude"),
   locationLongitude: real("location_longitude"),
-  deviceInfo: text("device_info"), // User agent, IP, etc.
+  deviceInfo: text("device_info"),
   failureReason: text("failure_reason"),
-  metadata: json("metadata"), // Additional verification details
+  metadata: json("metadata"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// ──────────────────────────────────────────────
+// Employee Invitations
+// ──────────────────────────────────────────────
 export const employeeInvitations = pgTable("employee_invitations", {
   id: serial("id").primaryKey(),
   organizationId: integer("organization_id").notNull().references(() => organizations.id),
@@ -108,7 +128,9 @@ export const employeeInvitations = pgTable("employee_invitations", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Junction table for employee location assignments
+// ──────────────────────────────────────────────
+// Employee Location Assignments
+// ──────────────────────────────────────────────
 export const employeeLocations = pgTable("employee_locations", {
   id: serial("id").primaryKey(),
   organizationId: integer("organization_id").notNull().references(() => organizations.id),
@@ -118,6 +140,66 @@ export const employeeLocations = pgTable("employee_locations", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// ──────────────────────────────────────────────
+// Billing Customers (Stripe)
+// ──────────────────────────────────────────────
+export const billingCustomers = pgTable("billing_customers", {
+  id: serial("id").primaryKey(),
+  organisationId: integer("organisation_id").notNull().references(() => organizations.id).unique(),
+  stripeCustomerId: varchar("stripe_customer_id").unique().notNull(),
+  billingEmail: varchar("billing_email").notNull(),
+  country: varchar("country"),
+  taxId: varchar("tax_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// ──────────────────────────────────────────────
+// Subscriptions (Stripe)
+// ──────────────────────────────────────────────
+export const subscriptions = pgTable("subscriptions", {
+  id: serial("id").primaryKey(),
+  organisationId: integer("organisation_id").notNull().references(() => organizations.id),
+  stripeSubscriptionId: varchar("stripe_subscription_id").unique().notNull(),
+  stripePriceId: varchar("stripe_price_id").notNull(),
+  status: varchar("status").notNull(), // active, trialing, past_due, canceled, unpaid
+  currentPeriodEnd: timestamp("current_period_end"),
+  cancelAtPeriodEnd: boolean("cancel_at_period_end").default(false),
+  trialEndsAt: timestamp("trial_ends_at"),
+  activeEmployeeQuantity: integer("active_employee_quantity").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// ──────────────────────────────────────────────
+// Webhook Events (Stripe idempotency)
+// ──────────────────────────────────────────────
+export const webhookEvents = pgTable("webhook_events", {
+  id: serial("id").primaryKey(),
+  stripeEventId: varchar("stripe_event_id").unique().notNull(),
+  eventType: varchar("event_type").notNull(),
+  processedAt: timestamp("processed_at").defaultNow(),
+});
+
+// ──────────────────────────────────────────────
+// Employee Consents (biometric/face)
+// ──────────────────────────────────────────────
+export const employeeConsents = pgTable("employee_consents", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  organisationId: integer("organisation_id").notNull().references(() => organizations.id),
+  consentType: varchar("consent_type").notNull(), // "face_biometric"
+  consentGiven: boolean("consent_given").notNull(),
+  policyVersion: varchar("policy_version").notNull(),
+  ipAddress: varchar("ip_address"),
+  userAgent: text("user_agent"),
+  consentedAt: timestamp("consented_at").defaultNow(),
+  revokedAt: timestamp("revoked_at"),
+});
+
+// ══════════════════════════════════════════════
+// RELATIONS
+// ══════════════════════════════════════════════
+
 export const organizationsRelations = relations(organizations, ({ many, one }) => ({
   users: many(users),
   locations: many(locations),
@@ -125,6 +207,11 @@ export const organizationsRelations = relations(organizations, ({ many, one }) =
   attendanceVerificationLogs: many(attendanceVerificationLogs),
   employeeInvitations: many(employeeInvitations),
   employeeLocations: many(employeeLocations),
+  billingCustomer: one(billingCustomers, {
+    fields: [organizations.id],
+    references: [billingCustomers.organisationId],
+  }),
+  subscriptions: many(subscriptions),
   admin: one(users, {
     fields: [organizations.adminId],
     references: [users.id],
@@ -143,6 +230,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   }),
   employeeLocations: many(employeeLocations),
   assignedLocations: many(employeeLocations, { relationName: "assignedBy" }),
+  consents: many(employeeConsents),
 }));
 
 export const locationsRelations = relations(locations, ({ many, one }) => ({
@@ -216,6 +304,35 @@ export const attendanceVerificationLogsRelations = relations(attendanceVerificat
   }),
 }));
 
+export const billingCustomersRelations = relations(billingCustomers, ({ one }) => ({
+  organisation: one(organizations, {
+    fields: [billingCustomers.organisationId],
+    references: [organizations.id],
+  }),
+}));
+
+export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
+  organisation: one(organizations, {
+    fields: [subscriptions.organisationId],
+    references: [organizations.id],
+  }),
+}));
+
+export const employeeConsentsRelations = relations(employeeConsents, ({ one }) => ({
+  user: one(users, {
+    fields: [employeeConsents.userId],
+    references: [users.id],
+  }),
+  organisation: one(organizations, {
+    fields: [employeeConsents.organisationId],
+    references: [organizations.id],
+  }),
+}));
+
+// ══════════════════════════════════════════════
+// ZOD INSERT SCHEMAS
+// ══════════════════════════════════════════════
+
 export const insertOrganizationSchema = createInsertSchema(organizations).omit({
   id: true,
   createdAt: true,
@@ -259,15 +376,55 @@ export const insertAttendanceVerificationLogSchema = createInsertSchema(attendan
   createdAt: true,
 });
 
+export const insertBillingCustomerSchema = createInsertSchema(billingCustomers).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertWebhookEventSchema = createInsertSchema(webhookEvents).omit({
+  id: true,
+  processedAt: true,
+});
+
+export const insertEmployeeConsentSchema = createInsertSchema(employeeConsents).omit({
+  id: true,
+  consentedAt: true,
+});
+
+// ══════════════════════════════════════════════
+// VALIDATION SCHEMAS
+// ══════════════════════════════════════════════
+
 // Login schemas
 export const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
-  organizationId: z.number().optional(), // For developer login
+  organizationId: z.number().optional(),
+  slug: z.string().optional(),
 });
 
 export const registerSchema = insertUserSchema.extend({
   confirmPassword: z.string().min(6),
+}).refine(data => data.password === data.confirmPassword, {
+  message: "Passwords don't match",
+  path: ["confirmPassword"],
+});
+
+// Signup schema (public org + admin creation)
+export const signupSchema = z.object({
+  orgName: z.string().min(2, "Organisation name must be at least 2 characters"),
+  slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/, "Slug must contain only lowercase letters, numbers, and hyphens"),
+  email: z.string().email(),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  confirmPassword: z.string().min(8),
+  firstName: z.string().min(1, "First name is required"),
+  lastName: z.string().min(1, "Last name is required"),
 }).refine(data => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
@@ -297,6 +454,17 @@ export const verifyPinSchema = z.object({
   pin: z.string().min(4).max(6).regex(/^\d+$/, "PIN must contain only digits"),
 });
 
+// Consent schema
+export const consentSchema = z.object({
+  consentType: z.enum(["face_biometric"]),
+  consentGiven: z.boolean(),
+  policyVersion: z.string().min(1),
+});
+
+// ══════════════════════════════════════════════
+// TYPE EXPORTS
+// ══════════════════════════════════════════════
+
 export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
 export type User = typeof users.$inferSelect;
@@ -311,7 +479,17 @@ export type EmployeeLocation = typeof employeeLocations.$inferSelect;
 export type InsertEmployeeLocation = z.infer<typeof insertEmployeeLocationSchema>;
 export type AttendanceVerificationLog = typeof attendanceVerificationLogs.$inferSelect;
 export type InsertAttendanceVerificationLog = z.infer<typeof insertAttendanceVerificationLogSchema>;
+export type BillingCustomer = typeof billingCustomers.$inferSelect;
+export type InsertBillingCustomer = z.infer<typeof insertBillingCustomerSchema>;
+export type Subscription = typeof subscriptions.$inferSelect;
+export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
+export type WebhookEvent = typeof webhookEvents.$inferSelect;
+export type InsertWebhookEvent = z.infer<typeof insertWebhookEventSchema>;
+export type EmployeeConsent = typeof employeeConsents.$inferSelect;
+export type InsertEmployeeConsent = z.infer<typeof insertEmployeeConsentSchema>;
 export type LoginData = z.infer<typeof loginSchema>;
 export type RegisterData = z.infer<typeof registerSchema>;
+export type SignupData = z.infer<typeof signupSchema>;
 export type SetupPinData = z.infer<typeof setupPinSchema>;
 export type VerifyPinData = z.infer<typeof verifyPinSchema>;
+export type ConsentData = z.infer<typeof consentSchema>;

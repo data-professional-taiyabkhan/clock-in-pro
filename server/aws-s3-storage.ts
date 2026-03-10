@@ -1,365 +1,147 @@
 /**
- * AWS S3 Storage Service for Face Images
- * Replaces local/base64 storage with cloud storage
+ * Local Face Image Storage — replaces AWS S3.
+ * Stores face images as base64 data URIs in the database (via faceImageUrl field).
+ * No external storage dependency.
  */
-
-import {
-  S3Client,
-  PutObjectCommand,
-  GetObjectCommand,
-  DeleteObjectCommand,
-  HeadObjectCommand,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import crypto from "crypto";
 
-// Lazy initialization - clients created on first use
-let s3Client: S3Client | null = null;
-
-function getS3Client(): S3Client {
-  if (!s3Client) {
-    s3Client = new S3Client({
-      region: process.env.AWS_REGION || "us-east-1",
-      credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
-      },
-    });
-  }
-  return s3Client;
-}
-
-function getBucketName(): string {
-  return process.env.AWS_S3_BUCKET || "";
-}
-
 /**
- * Generate a unique S3 key for a face image
+ * Generate a unique key for a face image (used as a reference ID).
  */
-function generateFaceImageKey(userId: number, timestamp?: number): string {
+export function generateFaceImageKey(userId: number, timestamp?: number): string {
   const ts = timestamp || Date.now();
-  const hash = crypto.createHash("md5").update(`${userId}-${ts}`).digest("hex");
-  return `faces/user-${userId}/${hash}.jpg`;
+  const hash = crypto.createHash("sha256").update(`${userId}-${ts}`).digest("hex").slice(0, 16);
+  return `face-${userId}-${hash}`;
 }
 
 /**
- * Convert base64 image to buffer
+ * Convert base64 image string to a Buffer + content type.
  */
-function base64ToBuffer(base64Image: string): {
-  buffer: Buffer;
-  contentType: string;
-} {
-  // Extract content type and base64 data
-  let contentType = "image/jpeg";
+export function base64ToBuffer(base64Image: string): { buffer: Buffer; contentType: string } {
   let base64Data = base64Image;
+  let contentType = "image/jpeg";
 
   if (base64Image.startsWith("data:")) {
-    const matches = base64Image.match(/^data:([^;]+);base64,(.+)$/);
-    if (matches) {
-      contentType = matches[1];
-      base64Data = matches[2];
+    const match = base64Image.match(/^data:(image\/\w+);base64,/);
+    if (match) {
+      contentType = match[1];
     }
+    base64Data = base64Image.replace(/^data:image\/\w+;base64,/, "");
   }
 
-  const buffer = Buffer.from(base64Data, "base64");
-  return { buffer, contentType };
+  return { buffer: Buffer.from(base64Data, "base64"), contentType };
 }
 
 /**
- * Upload face image to S3
+ * "Upload" face image — returns the base64 data URI directly (no S3).
+ * The data URI is stored in the user's faceImageUrl field.
  */
 export async function uploadFaceImage(
   userId: number,
   imageBase64: string
-): Promise<{
-  success: boolean;
-  imageUrl?: string;
-  s3Key?: string;
-  error?: string;
-}> {
+): Promise<{ success: boolean; imageUrl?: string; s3Key?: string; error?: string }> {
   try {
-    const bucketName = getBucketName();
-    if (!bucketName) {
-      throw new Error("S3 bucket not configured");
+    // Ensure it's a proper data URI
+    let dataUri = imageBase64;
+    if (!dataUri.startsWith("data:")) {
+      dataUri = `data:image/jpeg;base64,${imageBase64}`;
     }
 
-    const { buffer, contentType } = base64ToBuffer(imageBase64);
-    const s3Key = generateFaceImageKey(userId);
-
-    // Upload to S3
-    const command = new PutObjectCommand({
-      Bucket: bucketName,
-      Key: s3Key,
-      Body: buffer,
-      ContentType: contentType,
-      Metadata: {
-        userId: userId.toString(),
-        uploadedAt: new Date().toISOString(),
-      },
-      // Server-side encryption
-      ServerSideEncryption: "AES256",
-    });
-
-    await getS3Client().send(command);
-
-    // Generate the S3 URL (not publicly accessible, will use signed URLs)
-    const imageUrl = `s3://${bucketName}/${s3Key}`;
-
-    console.log(`Face image uploaded to S3:`, {
-      userId,
-      s3Key,
-      size: buffer.length,
-    });
+    const key = generateFaceImageKey(userId);
 
     return {
       success: true,
-      imageUrl,
-      s3Key,
+      imageUrl: dataUri,
+      s3Key: key,
     };
-  } catch (error) {
-    console.error("Error uploading face image to S3:", error);
+  } catch (error: any) {
     return {
       success: false,
-      error: `Failed to upload image: ${error.message}`,
+      error: error.message || "Failed to process face image",
     };
   }
 }
 
 /**
- * Get a signed URL for accessing a face image
- * Signed URLs expire after a certain time (default 15 minutes)
+ * Get a "signed" URL for a face image — just returns the stored URL/data URI directly.
  */
 export async function getSignedFaceImageUrl(
   s3KeyOrUrl: string,
-  expiresIn: number = 900 // 15 minutes
+  _expiresIn: number = 900
 ): Promise<string | null> {
-  try {
-    const bucketName = getBucketName();
-    if (!bucketName) {
-      throw new Error("S3 bucket not configured");
-    }
-
-    // Extract S3 key from URL if needed
-    let s3Key = s3KeyOrUrl;
-    if (s3KeyOrUrl.startsWith("s3://")) {
-      s3Key = s3KeyOrUrl.replace(`s3://${getBucketName()}/`, "");
-    } else if (s3KeyOrUrl.startsWith("https://")) {
-      // Extract key from HTTPS URL
-      const url = new URL(s3KeyOrUrl);
-      s3Key = url.pathname.substring(1); // Remove leading /
-    }
-
-    const command = new GetObjectCommand({
-      Bucket: getBucketName(),
-      Key: s3Key,
-    });
-
-    const signedUrl = await getSignedUrl(getS3Client(), command, { expiresIn });
-    return signedUrl;
-  } catch (error) {
-    console.error("Error generating signed URL:", error);
-    return null;
+  // If it's already a data URI or URL, return it directly
+  if (s3KeyOrUrl && (s3KeyOrUrl.startsWith("data:") || s3KeyOrUrl.startsWith("http"))) {
+    return s3KeyOrUrl;
   }
+  return null;
 }
 
 /**
- * Download face image from S3 as base64
- * Useful for backward compatibility with existing face recognition code
+ * Download face image as base64 — extracts base64 from a data URI.
  */
-export async function downloadFaceImageAsBase64(
-  s3KeyOrUrl: string
-): Promise<string | null> {
-  try {
-    const bucketName = getBucketName();
-    if (!bucketName) {
-      throw new Error("S3 bucket not configured");
-    }
+export async function downloadFaceImageAsBase64(s3KeyOrUrl: string): Promise<string | null> {
+  if (!s3KeyOrUrl) return null;
 
-    // Extract S3 key from URL if needed
-    let s3Key = s3KeyOrUrl;
-    if (s3KeyOrUrl.startsWith("s3://")) {
-      s3Key = s3KeyOrUrl.replace(`s3://${getBucketName()}/`, "");
-    }
-
-    const command = new GetObjectCommand({
-      Bucket: getBucketName(),
-      Key: s3Key,
-    });
-
-    const response = await s3Client.send(command);
-
-    if (!response.Body) {
-      return null;
-    }
-
-    // Convert stream to buffer
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of response.Body as any) {
-      chunks.push(chunk);
-    }
-    const buffer = Buffer.concat(chunks);
-
-    // Convert to base64 with data URL prefix
-    const contentType = response.ContentType || "image/jpeg";
-    const base64 = buffer.toString("base64");
-    return `data:${contentType};base64,${base64}`;
-  } catch (error) {
-    console.error("Error downloading face image from S3:", error);
-    return null;
+  if (s3KeyOrUrl.startsWith("data:image")) {
+    // Extract raw base64 from data URI
+    const base64Part = s3KeyOrUrl.replace(/^data:image\/\w+;base64,/, "");
+    return base64Part;
   }
+
+  // If it's already raw base64
+  if (!s3KeyOrUrl.startsWith("http")) {
+    return s3KeyOrUrl;
+  }
+
+  return null;
 }
 
 /**
- * Delete face image from S3
+ * Delete a face image — no-op in local mode (data is in DB, cleared via storage.clearUserFaceData).
  */
-export async function deleteFaceImage(s3KeyOrUrl: string): Promise<boolean> {
-  try {
-    const bucketName = getBucketName();
-    if (!bucketName) {
-      throw new Error("S3 bucket not configured");
-    }
-
-    // Extract S3 key from URL if needed
-    let s3Key = s3KeyOrUrl;
-    if (s3KeyOrUrl.startsWith("s3://")) {
-      s3Key = s3KeyOrUrl.replace(`s3://${getBucketName()}/`, "");
-    }
-
-    const command = new DeleteObjectCommand({
-      Bucket: getBucketName(),
-      Key: s3Key,
-    });
-
-    await getS3Client().send(command);
-
-    console.log(`Face image deleted from S3:`, { s3Key });
-    return true;
-  } catch (error) {
-    console.error("Error deleting face image from S3:", error);
-    return false;
-  }
+export async function deleteFaceImage(_s3KeyOrUrl: string): Promise<boolean> {
+  return true;
 }
 
 /**
- * Delete all face images for a user
+ * Delete all face images for a user — no-op (handled by storage layer).
  */
-export async function deleteUserFaceImages(userId: number): Promise<number> {
-  try {
-    const bucketName = getBucketName();
-    if (!bucketName) {
-      throw new Error("S3 bucket not configured");
-    }
-
-    const { ListObjectsV2Command, DeleteObjectsCommand } = await import(
-      "@aws-sdk/client-s3"
-    );
-
-    // List all objects with the user's prefix
-    const prefix = `faces/user-${userId}/`;
-    const listCommand = new ListObjectsV2Command({
-      Bucket: getBucketName(),
-      Prefix: prefix,
-    });
-
-    const listResponse = await s3Client.send(listCommand);
-
-    if (!listResponse.Contents || listResponse.Contents.length === 0) {
-      return 0;
-    }
-
-    // Delete all objects
-    const objectsToDelete = listResponse.Contents.map((obj) => ({
-      Key: obj.Key,
-    }));
-
-    const deleteCommand = new DeleteObjectsCommand({
-      Bucket: BUCKET_NAME,
-      Delete: {
-        Objects: objectsToDelete,
-      },
-    });
-
-    const deleteResponse = await s3Client.send(deleteCommand);
-    const deletedCount = deleteResponse.Deleted?.length || 0;
-
-    console.log(`Deleted ${deletedCount} face images for user ${userId}`);
-    return deletedCount;
-  } catch (error) {
-    console.error("Error deleting user face images:", error);
-    return 0;
-  }
+export async function deleteUserFaceImages(_userId: number): Promise<number> {
+  return 0;
 }
 
 /**
- * Check if a face image exists in S3
+ * Check if a face image exists.
  */
 export async function faceImageExists(s3KeyOrUrl: string): Promise<boolean> {
-  try {
-    const bucketName = getBucketName();
-    if (!bucketName) {
-      throw new Error("S3 bucket not configured");
-    }
-
-    // Extract S3 key from URL if needed
-    let s3Key = s3KeyOrUrl;
-    if (s3KeyOrUrl.startsWith("s3://")) {
-      s3Key = s3KeyOrUrl.replace(`s3://${getBucketName()}/`, "");
-    }
-
-    const command = new HeadObjectCommand({
-      Bucket: getBucketName(),
-      Key: s3Key,
-    });
-
-    await getS3Client().send(command);
-    return true;
-  } catch (error) {
-    return false;
-  }
+  return !!(s3KeyOrUrl && (s3KeyOrUrl.startsWith("data:") || s3KeyOrUrl.length > 10));
 }
 
 /**
- * Get bucket statistics
+ * Get storage stats.
  */
-export async function getBucketStats(): Promise<{
-  bucketName: string;
-  region: string;
-  configured: boolean;
-}> {
-  return {
-    bucketName: getBucketName(),
-    region: process.env.AWS_REGION || "us-east-1",
-    configured: Boolean(getBucketName()),
-  };
+export async function getBucketStats(): Promise<{ bucketName: string; region: string; configured: boolean }> {
+  return { bucketName: "local-storage", region: "local", configured: true };
 }
 
 /**
- * Upload multiple face images for a user (for training with multiple angles)
+ * Upload multiple face images.
  */
 export async function uploadMultipleFaceImages(
   userId: number,
   imageBase64Array: string[]
-): Promise<{
-  success: boolean;
-  uploadedUrls: string[];
-  errors: string[];
-}> {
-  const uploadedUrls: string[] = [];
+): Promise<{ success: boolean; uploadedUrls: string[]; errors: string[] }> {
+  const urls: string[] = [];
   const errors: string[] = [];
 
-  for (let i = 0; i < imageBase64Array.length; i++) {
-    const result = await uploadFaceImage(userId, imageBase64Array[i]);
+  for (const img of imageBase64Array) {
+    const result = await uploadFaceImage(userId, img);
     if (result.success && result.imageUrl) {
-      uploadedUrls.push(result.imageUrl);
+      urls.push(result.imageUrl);
     } else {
-      errors.push(result.error || `Failed to upload image ${i + 1}`);
+      errors.push(result.error || "Upload failed");
     }
   }
 
-  return {
-    success: errors.length === 0,
-    uploadedUrls,
-    errors,
-  };
+  return { success: errors.length === 0, uploadedUrls: urls, errors };
 }
-

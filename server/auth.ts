@@ -28,33 +28,16 @@ export function setupAuth(app: Express) {
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: false, // Set to true in production with HTTPS
+      secure: process.env.NODE_ENV === "production",
       httpOnly: true,
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      sameSite: 'lax' // Better cookie persistence
+      sameSite: 'lax'
     }
   }));
 
-  // Authentication middleware
+  // Authentication middleware — load user from session
   app.use((req: any, res, next) => {
-    if (req.session?.isDeveloper) {
-      // Developer authentication
-      req.user = {
-        id: -1,
-        email: "developer@saas.com",
-        role: "developer",
-        firstName: "System",
-        lastName: "Developer",
-        password: "",
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        organizationId: null,
-        faceImageUrl: null,
-        faceEmbedding: null
-      };
-      next();
-    } else if (req.session?.userId) {
+    if (req.session?.userId) {
       storage.getUser(req.session.userId).then(user => {
         req.user = user;
         next();
@@ -85,14 +68,6 @@ export function requireManager(req: Request, res: Response, next: NextFunction) 
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (!req.user || req.user.role !== "admin") {
     return res.status(403).json({ message: "Admin access required" });
-  }
-  next();
-}
-
-// Middleware to require developer role
-export function requireDeveloper(req: Request, res: Response, next: NextFunction) {
-  if (!req.user || req.user.role !== "developer") {
-    return res.status(403).json({ message: "Developer access required" });
   }
   next();
 }

@@ -12,9 +12,6 @@
     "db:verify": "node scripts/verify-db-schema.js"
   },
   "dependencies": {
-    "@aws-sdk/client-rekognition": "^3.922.0",
-    "@aws-sdk/client-s3": "^3.922.0",
-    "@aws-sdk/s3-request-presigner": "^3.922.0",
     "@bubblewrap/cli": "^1.23.0",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
@@ -79,6 +76,7 @@
     "react-icons": "^5.4.0",
     "react-resizable-panels": "^2.1.7",
     "recharts": "^2.15.2",
+    "stripe": "^20.4.1",
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
     "tw-animate-css": "^1.2.5",
