@@ -12,10 +12,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Users, UserPlus, Clock, MapPin, Calendar, Upload, Building2, UserCheck, LogOut, Plus, Edit, Trash2, Key } from "lucide-react";
+import { Users, UserPlus, Clock, MapPin, Calendar, Upload, Building2, UserCheck, LogOut, Plus, Edit, Trash2, Key, Settings, Copy, CheckCircle2, Link as LinkIcon, CreditCard } from "lucide-react";
 import type { User, AttendanceRecord, Location, InsertLocation, EmployeeInvitation, EmployeeLocation } from "@shared/schema";
 import { format } from "date-fns";
 import { ChangePasswordDialog } from "@/components/change-password-dialog";
+import EmployeeSettings from "@/pages/employee-settings";
 
 export default function AdminDashboard() {
   const { toast } = useToast();
@@ -26,6 +27,7 @@ export default function AdminDashboard() {
   const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [isCreateEmployeeDialogOpen, setIsCreateEmployeeDialogOpen] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(false);
 
   const { data: user } = useQuery({
     queryKey: ["/api/user"],
@@ -55,6 +57,11 @@ export default function AdminDashboard() {
   const { data: invitations = [] } = useQuery({
     queryKey: ["/api/invitations"],
     queryFn: () => apiRequest("/api/invitations"),
+  });
+
+  const { data: orgInfo } = useQuery<{ id: number; name: string; slug: string }>({
+    queryKey: ["/api/organization"],
+    queryFn: () => apiRequest("/api/organization"),
   });
 
   const assignLocationMutation = useMutation({
@@ -280,7 +287,7 @@ export default function AdminDashboard() {
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    
+
     const locationData = {
       name: formData.get("name") as string,
       postcode: formData.get("postcode") as string,
@@ -325,6 +332,20 @@ export default function AdminDashboard() {
             </div>
           </div>
           <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={async () => {
+                try {
+                  const data = await apiRequest("/api/billing/portal-session", { method: "POST" });
+                  if (data?.url) window.location.href = data.url;
+                } catch (err: any) {
+                  toast({ title: "Billing", description: err.message || "Could not open billing portal", variant: "destructive" });
+                }
+              }}
+            >
+              <CreditCard className="w-4 h-4 mr-2" />
+              Manage Billing
+            </Button>
             <Button variant="outline" onClick={() => setShowPasswordDialog(true)}>
               <Key className="w-4 h-4 mr-2" />
               Change Password
@@ -336,14 +357,57 @@ export default function AdminDashboard() {
           </div>
         </div>
 
+        {/* Employee Login URL */}
+        {orgInfo?.slug && (
+          <Card className="mb-6 border-blue-200 bg-blue-50/50">
+            <CardContent className="pt-5 pb-4">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 bg-blue-100 rounded-lg flex items-center justify-center shrink-0">
+                    <LinkIcon className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-sm text-blue-900">Employee Login Link</p>
+                    <p className="text-xs text-blue-700">Share this link with your employees so they can sign in</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <code className="bg-white border border-blue-200 px-3 py-1.5 rounded-md text-sm font-mono text-blue-800">
+                    {window.location.origin}/org/{orgInfo.slug}
+                  </code>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-blue-300 text-blue-700 hover:bg-blue-100"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/org/${orgInfo.slug}`);
+                      setCopiedUrl(true);
+                      setTimeout(() => setCopiedUrl(false), 2000);
+                    }}
+                  >
+                    {copiedUrl ? (
+                      <><CheckCircle2 className="h-4 w-4 mr-1" /> Copied!</>
+                    ) : (
+                      <><Copy className="h-4 w-4 mr-1" /> Copy</>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Tabs */}
         <Tabs defaultValue="assignments" className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="assignments">Location Assignments</TabsTrigger>
             <TabsTrigger value="employees">Employees</TabsTrigger>
             <TabsTrigger value="locations">Locations</TabsTrigger>
             <TabsTrigger value="attendance">Attendance</TabsTrigger>
             <TabsTrigger value="invitations">Invitations</TabsTrigger>
+            <TabsTrigger value="settings">
+              <Settings className="h-4 w-4 mr-1" /> Settings
+            </TabsTrigger>
           </TabsList>
 
           {/* Location Assignments Tab */}
@@ -366,8 +430,8 @@ export default function AdminDashboard() {
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div>
                         <Label htmlFor="employee-select">Select Employee</Label>
-                        <Select 
-                          value={selectedEmployeeId?.toString() || ""} 
+                        <Select
+                          value={selectedEmployeeId?.toString() || ""}
                           onValueChange={(value) => setSelectedEmployeeId(parseInt(value))}
                         >
                           <SelectTrigger>
@@ -386,11 +450,11 @@ export default function AdminDashboard() {
                           </SelectContent>
                         </Select>
                       </div>
-                      
+
                       <div>
                         <Label htmlFor="location-select">Select Location</Label>
-                        <Select 
-                          value={selectedLocationId?.toString() || ""} 
+                        <Select
+                          value={selectedLocationId?.toString() || ""}
                           onValueChange={(value) => setSelectedLocationId(parseInt(value))}
                         >
                           <SelectTrigger>
@@ -409,14 +473,14 @@ export default function AdminDashboard() {
                           </SelectContent>
                         </Select>
                       </div>
-                      
+
                       <div className="flex items-end">
-                        <Button 
+                        <Button
                           onClick={() => {
                             if (selectedEmployeeId && selectedLocationId) {
-                              assignLocationMutation.mutate({ 
-                                userId: selectedEmployeeId, 
-                                locationId: selectedLocationId 
+                              assignLocationMutation.mutate({
+                                userId: selectedEmployeeId,
+                                locationId: selectedLocationId
                               });
                             }
                           }}
@@ -550,7 +614,6 @@ export default function AdminDashboard() {
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="employee">Employee</SelectItem>
-                              <SelectItem value="manager">Manager</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -607,7 +670,7 @@ export default function AdminDashboard() {
                             </TableCell>
                             <TableCell>{employee.email}</TableCell>
                             <TableCell>
-                              <Badge variant={employee.role === 'admin' ? 'destructive' : employee.role === 'manager' ? 'default' : 'secondary'}>
+                              <Badge variant={employee.role === 'admin' ? 'destructive' : 'secondary'}>
                                 {employee.role}
                               </Badge>
                             </TableCell>
@@ -631,8 +694,8 @@ export default function AdminDashboard() {
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-2">
-                                <Button 
-                                  variant="outline" 
+                                <Button
+                                  variant="outline"
                                   size="sm"
                                   onClick={() => handleUpdateFace(employee.id)}
                                   disabled={updateFaceMutation.isPending}
@@ -641,8 +704,8 @@ export default function AdminDashboard() {
                                   {updateFaceMutation.isPending ? "Updating..." : "Update Face"}
                                 </Button>
                                 {employee.role !== 'admin' && (
-                                  <Button 
-                                    variant="destructive" 
+                                  <Button
+                                    variant="destructive"
                                     size="sm"
                                     onClick={() => {
                                       if (confirm(`Are you sure you want to delete ${employee.firstName} ${employee.lastName}? This action cannot be undone.`)) {
@@ -778,8 +841,8 @@ export default function AdminDashboard() {
                             disabled={createLocationMutation.isPending || updateLocationMutation.isPending}
                             className={editingLocation ? "bg-blue-600 hover:bg-blue-700" : "bg-green-600 hover:bg-green-700"}
                           >
-                            {(createLocationMutation.isPending || updateLocationMutation.isPending) ? 
-                              "Processing..." : 
+                            {(createLocationMutation.isPending || updateLocationMutation.isPending) ?
+                              "Processing..." :
                               editingLocation ? "Update Location" : "Create Location"
                             }
                           </Button>
@@ -813,7 +876,7 @@ export default function AdminDashboard() {
                           const assignedCount = employeeLocations?.filter(
                             (assignment: any) => assignment.location.id === location.id
                           ).length || 0;
-                          
+
                           return (
                             <TableRow key={location.id}>
                               <TableCell className="font-medium">{location.name}</TableCell>
@@ -913,8 +976,8 @@ export default function AdminDashboard() {
                               {record.clockOutTime ? format(new Date(record.clockOutTime), 'HH:mm') : '-'}
                             </TableCell>
                             <TableCell>
-                              {record.clockInTime && record.clockOutTime ? 
-                                `${Math.round((new Date(record.clockOutTime).getTime() - new Date(record.clockInTime).getTime()) / (1000 * 60 * 60 * 100)) / 100}h` : 
+                              {record.clockInTime && record.clockOutTime ?
+                                `${Math.round((new Date(record.clockOutTime).getTime() - new Date(record.clockInTime).getTime()) / (1000 * 60 * 60 * 100)) / 100}h` :
                                 '-'
                               }
                             </TableCell>
@@ -942,7 +1005,7 @@ export default function AdminDashboard() {
                   Employee Invitations
                 </CardTitle>
                 <CardDescription>
-                  Send invitations to new employees and managers
+                  Send invitations to new employees
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -959,7 +1022,6 @@ export default function AdminDashboard() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="employee">Employee</SelectItem>
-                          <SelectItem value="manager">Manager</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -989,7 +1051,7 @@ export default function AdminDashboard() {
                           <TableRow key={invitation.id}>
                             <TableCell>{invitation.email}</TableCell>
                             <TableCell>
-                              <Badge variant={invitation.role === 'manager' ? 'default' : 'secondary'}>
+                              <Badge variant={'secondary'}>
                                 {invitation.role}
                               </Badge>
                             </TableCell>
@@ -1013,12 +1075,16 @@ export default function AdminDashboard() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          <TabsContent value="settings">
+            <EmployeeSettings />
+          </TabsContent>
         </Tabs>
       </div>
 
-      <ChangePasswordDialog 
-        open={showPasswordDialog} 
-        onOpenChange={setShowPasswordDialog} 
+      <ChangePasswordDialog
+        open={showPasswordDialog}
+        onOpenChange={setShowPasswordDialog}
       />
     </div>
   );

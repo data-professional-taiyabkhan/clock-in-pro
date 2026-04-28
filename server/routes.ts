@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { setupAuth, requireAuth, requireManager, requireAdmin, hashPassword, comparePasswords } from "./auth";
+import { setupAuth, requireAuth, requireAdmin, hashPassword, comparePasswords } from "./auth";
 import { storage } from "./storage";
 import { insertAttendanceRecordSchema, insertLocationSchema, loginSchema, registerSchema, insertOrganizationSchema, setupPinSchema, verifyPinSchema, signupSchema, users, employeeInvitations, locations, employeeLocations } from "@shared/schema";
 import type { User } from "@shared/schema";
@@ -14,10 +14,11 @@ import { AuditLogger } from "./lib/audit-logger";
 import { createRateLimitMiddleware, createAuthRateLimitMiddleware } from "./lib/rate-limiter";
 import { DeviceFingerprinting } from "./lib/device-fingerprinting";
 import { AnomalyDetection } from "./lib/anomaly-detection";
+import { sendInvitationEmail } from "./lib/email";
 
-// AWS Services
-import { uploadFaceImage, getSignedFaceImageUrl, downloadFaceImageAsBase64 } from "./aws-s3-storage";
-import { registerFace, verifyFace, analyzeFaceQuality, deleteUserFaces } from "./aws-rekognition";
+// Face recognition & image storage (local implementations)
+import { uploadFaceImage, getSignedFaceImageUrl, downloadFaceImageAsBase64 } from "./lib/face-image-storage";
+import { registerFace, verifyFace, analyzeFaceQuality, deleteUserFaces } from "./lib/face-recognition";
 
 const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
 
@@ -640,7 +641,8 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * c; // Distance in meters
 }
 
-// Liveness detection stub - AWS Rekognition has built-in quality checks
+// Liveness detection stub — placeholder until a local model is integrated.
+// For now the stub always passes. PIN clock-in is the recommended production path.
 async function performLivenessDetection(imageData: string): Promise<{
   success: boolean;
   livenessScore: number;
@@ -649,13 +651,12 @@ async function performLivenessDetection(imageData: string): Promise<{
   recommendations?: string[];
   error?: string;
 }> {
-  // AWS Rekognition handles quality and face detection
-  // Return success for now - AWS Rekognition will validate face quality
+  // Stub: always returns live. Replace with a real model for production.
   return {
     success: true,
     livenessScore: 100,
     isLive: true,
-    analysis: { provider: 'AWS Rekognition' },
+    analysis: { provider: 'stub' },
     recommendations: []
   };
 }
@@ -858,7 +859,7 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  app.post("/api/register", requireManager, async (req, res) => {
+  app.post("/api/register", requireAdmin, async (req, res) => {
     try {
       const userData = registerSchema.parse(req.body);
 
@@ -889,6 +890,17 @@ export function registerRoutes(app: Express): Server {
     req.session?.destroy(() => {
       res.json({ message: "Logged out successfully" });
     });
+  });
+
+  // ── Public: look up organisation by slug (for employee login page) ──
+  app.get("/api/org/:slug", async (req, res) => {
+    try {
+      const org = await storage.getOrganizationBySlug(req.params.slug);
+      if (!org) return res.status(404).json({ message: "Organisation not found" });
+      res.json({ id: org.id, name: org.name, slug: org.slug });
+    } catch {
+      res.status(500).json({ message: "Server error" });
+    }
   });
 
   // ── Public signup: create organisation + admin + trial ──
@@ -956,6 +968,19 @@ export function registerRoutes(app: Express): Server {
     }
 
     res.json(toSafeUser(req.user));
+  });
+
+  // Return the current user's organisation info
+  app.get("/api/organization", requireAuth, async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ message: "Not authenticated" });
+      if (!req.user.organizationId) return res.status(404).json({ message: "No organisation" });
+      const org = await storage.getOrganization(req.user.organizationId);
+      if (!org) return res.status(404).json({ message: "Organisation not found" });
+      res.json({ id: org.id, name: org.name, slug: org.slug });
+    } catch {
+      res.status(500).json({ message: "Server error" });
+    }
   });
 
   app.post("/api/register-face", requireAuth, async (req, res) => {
@@ -1361,7 +1386,7 @@ export function registerRoutes(app: Express): Server {
   });
 
   // Employee location assignments (Manager only)
-  app.get("/api/employee-locations", requireManager, async (req, res) => {
+  app.get("/api/employee-locations", requireAdmin, async (req, res) => {
     try {
       const assignments = await storage.getAllEmployeeLocationAssignments(req.user!.organizationId);
       res.json(assignments);
@@ -1371,7 +1396,7 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  app.post("/api/employee-locations", requireManager, async (req, res) => {
+  app.post("/api/employee-locations", requireAdmin, async (req, res) => {
     try {
       console.log("Raw request body:", req.body);
       console.log("Body type:", typeof req.body);
@@ -1409,7 +1434,7 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  app.delete("/api/employee-locations/:userId/:locationId", requireManager, async (req, res) => {
+  app.delete("/api/employee-locations/:userId/:locationId", requireAdmin, async (req, res) => {
     try {
       const userId = parseInt(req.params.userId);
       const locationId = parseInt(req.params.locationId);
@@ -2418,7 +2443,7 @@ export function registerRoutes(app: Express): Server {
   });
 
   // Manual check-in for managers
-  app.post("/api/manual-clock-in", requireManager, async (req, res) => {
+  app.post("/api/manual-clock-in", requireAdmin, async (req, res) => {
     try {
       const { userId, date, clockInTime, locationId, notes } = req.body;
 
@@ -2441,7 +2466,7 @@ export function registerRoutes(app: Express): Server {
   });
 
   // Manual clock-out for managers
-  app.post("/api/manual-clock-out", requireManager, async (req, res) => {
+  app.post("/api/manual-clock-out", requireAdmin, async (req, res) => {
     try {
       const { userId, clockOutTime, notes } = req.body;
 
@@ -2508,7 +2533,7 @@ export function registerRoutes(app: Express): Server {
   });
 
   // Get employee time analytics for managers
-  app.get("/api/analytics/employees", requireManager, async (req, res) => {
+  app.get("/api/analytics/employees", requireAdmin, async (req, res) => {
     try {
       // CRITICAL: Only get users from the same organization as the manager
       const employees = await storage.getAllUsers(req.user!.organizationId);
@@ -2590,7 +2615,7 @@ export function registerRoutes(app: Express): Server {
   });
 
   // Get detailed employee time records for managers
-  app.get("/api/analytics/employee/:id", requireManager, async (req, res) => {
+  app.get("/api/analytics/employee/:id", requireAdmin, async (req, res) => {
     try {
       const employeeId = parseInt(req.params.id);
       const { period = 'week' } = req.query;
@@ -3045,6 +3070,19 @@ export function registerRoutes(app: Express): Server {
         expiresAt,
         token
       });
+
+      // Fire-and-forget: send invitation email (don't block the response)
+      storage.getOrganization(req.user!.organizationId!).then((org) => {
+        const inviterName = `${req.user!.firstName} ${req.user!.lastName}`;
+        const organisationName = org?.name || "your organisation";
+        sendInvitationEmail({
+          to: email,
+          inviterName,
+          organisationName,
+          token,
+          role: role || "employee",
+        }).catch(console.error);
+      }).catch(console.error);
 
       res.json({
         ...invitation,

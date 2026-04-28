@@ -12,10 +12,12 @@ export async function requireActiveSubscription(req: Request, res: Response, nex
         "/api/signup",
         "/api/logout",
         "/api/user",
+        "/api/organization",
         "/api/billing/",
         "/api/org/",
+        "/api/password/",
     ];
-    if (exemptPrefixes.some(p => req.path.startsWith(p))) return next();
+    if (exemptPrefixes.some(p => req.originalUrl.startsWith(p))) return next();
 
     const orgId = req.user?.organizationId;
     if (!orgId) {

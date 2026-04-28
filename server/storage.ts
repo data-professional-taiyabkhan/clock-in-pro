@@ -35,10 +35,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
-import session from "express-session";
-import MemoryStore from "memorystore";
 
-const MemoryStoreSession = MemoryStore(session);
 
 export interface IStorage {
   // Organization operations
@@ -114,16 +111,12 @@ export interface IStorage {
   getUserConsents(userId: number, organisationId: number): Promise<EmployeeConsent[]>;
   revokeConsent(userId: number, consentType: string): Promise<void>;
 
-  sessionStore: any;
 }
 
 export class DatabaseStorage implements IStorage {
-  sessionStore: any;
 
   constructor() {
-    this.sessionStore = new MemoryStoreSession({
-      checkPeriod: 86400000, // 24 hours
-    });
+    // Session store is managed in auth.ts via connect-pg-simple
   }
 
   // ─── Organization ───────────────────────────

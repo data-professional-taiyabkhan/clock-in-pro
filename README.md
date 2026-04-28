@@ -1,304 +1,222 @@
-# Attendance Management System
+# Clock-In Pro
 
-A modern, secure employee attendance management system with **AWS-powered facial recognition** for contactless clock-in/out functionality.
+Face-verified, geofenced attendance for UK SMBs with hourly staff. Stops buddy-punching. Ships in 2 weeks.
 
-## ✨ Features
+Clock-In Pro lets employees clock in and out by looking at their webcam. The system matches their face against a registered embedding, verifies their GPS location is within an allowed geofence, and records the attendance event. Managers get real-time dashboards, attendance reports, and employee management — all behind a multi-tenant SaaS with Stripe billing and a 14-day free trial.
 
-### 🔐 Advanced Security
-- **AWS Rekognition Face Recognition**: 99.9% accuracy with cloud-based AI face matching
-- **Multi-Role Access Control**: Employee, Manager, and Administrator roles with specific permissions
-- **Location-Based Verification**: GPS geofencing to restrict check-ins to authorized locations
-- **Session-Based Authentication**: Secure login system with bcrypt password hashing
-- **Real-Time Quality Checks**: Automatic face quality validation before registration
-
-### 📱 Employee Features
-- **Contactless Clock-In/Out**: AWS Rekognition face verification for attendance
-- **Real-Time Location Verification**: Automatic GPS location validation
-- **Attendance History**: View personal records and working hours
-- **Dashboard Analytics**: Personal attendance statistics and insights
-
-### 👔 Manager Features
-- **Employee Management**: Add, edit, and manage employee profiles
-- **Face Image Management**: Upload faces to AWS S3 and Rekognition
-- **Attendance Oversight**: Monitor team attendance
-- **Location Administration**: Create and manage office locations
-- **Team Analytics**: Comprehensive reports and insights
-
-### 🛡️ Administrator Features
-- **System-Wide Management**: Complete control over all components
-- **User Role Management**: Assign and modify permissions
-- **Location Configuration**: Set up office locations and access controls
-- **Invitation System**: Send secure invitations to new employees
-
-## 🚀 Technology Stack
-
-### Frontend
-- **React 18** with TypeScript
-- **Vite** for fast development
-- **Tailwind CSS** + **shadcn/ui** for modern UI
-- **TanStack Query** for state management
-- **React Hook Form** with Zod validation
-
-### Backend
-- **Node.js** + **Express.js**
-- **TypeScript** for full-stack type safety
-- **PostgreSQL** with **Drizzle ORM**
-- **AWS SDK v3** for cloud services
-
-### AWS Services
-- **AWS Rekognition**: Face recognition (99.9% accuracy)
-- **AWS S3**: Scalable image storage
-- **AWS RDS PostgreSQL**: Managed database
-
-## 📦 Installation
-
-### Prerequisites
-- Node.js 18+
-- PostgreSQL database (or AWS RDS)
-- AWS Account with Rekognition and S3 access
-
-### Quick Setup
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd AttendanceFaceSyncWeb
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Configure environment**
-   Create `.env` file:
-   ```env
-   # Database
-   DATABASE_URL=postgresql://user:pass@host:5432/dbname
-   
-   # AWS
-   AWS_REGION=us-east-1
-   AWS_ACCESS_KEY_ID=your-key-id
-   AWS_SECRET_ACCESS_KEY=your-secret-key
-   AWS_S3_BUCKET=your-bucket-name
-   AWS_REKOGNITION_COLLECTION=attendance-faces
-   
-   # Security
-   SESSION_SECRET=your-random-secret
-   NODE_ENV=development
-   ```
-
-4. **Set up database**
-   ```bash
-   npm run db:push
-   ```
-
-5. **Set up AWS**
-   ```bash
-   # Test AWS configuration
-   npm run aws:test
-   ```
-
-6. **Start the application**
-   ```bash
-   npm run dev
-   ```
-
-Open http://localhost:5000
-
-## 📚 Available Scripts
-
-```bash
-# Development
-npm run dev              # Start development server
-npm run build            # Build for production
-npm run start            # Start production server
-npm run check            # TypeScript type checking
-
-# Database
-npm run db:push          # Push schema to database
-npm run db:verify        # Verify database schema
-```
-
-## 🎯 Usage
-
-### Initial Setup
-1. **Create Organization**: Register your organization
-2. **Add Users**: Create employee accounts
-3. **Register Faces**: Upload employee face images (AWS S3 + Rekognition)
-4. **Set Locations**: Configure office locations with GPS
-
-### Daily Operations
-1. **Clock-In**: Face recognition via AWS Rekognition
-2. **Clock-Out**: Secure face verification
-3. **Monitor**: Managers view real-time attendance
-4. **Reports**: Generate attendance analytics
-
-## 🔒 Security Features
-
-### Face Recognition
-- **AWS Rekognition**: Enterprise-grade AI face matching
-- **Quality Validation**: Automatic image quality checks
-- **Anti-Spoofing**: Built-in liveness detection
-- **Similarity Threshold**: Configurable accuracy (default: 99%)
-
-### Data Protection
-- **S3 Storage**: Encrypted image storage
-- **Secure Sessions**: Session-based auth with bcrypt
-- **Role-Based Access**: Granular permissions
-- **Audit Logging**: Complete activity tracking
-
-### Location Security
-- **GPS Verification**: Real-time location checks
-- **Geofencing**: Radius-based access control
-- **Anomaly Detection**: Unusual pattern alerts
-
-## 🏗️ Architecture
-
-```
-┌─────────────────┐
-│   React Frontend│
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│  Express Backend│
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    │         │
-┌───▼───┐ ┌──▼────────┐
-│AWS RDS│ │AWS Services│
-│  PostgreSQL     │
-│                 │
-│   ┌─────────────┴────────────┐
-│   │                          │
-│┌──▼────────┐     ┌──────────▼─┐
-│AWS S3      │     │AWS         │
-│(Face Images)│    │Rekognition │
-└────────────┘     │(Face Match)│
-                   └────────────┘
-```
-
-## 📊 AWS Setup
-
-### 1. Create RDS PostgreSQL Database
-- Instance: db.t3.micro or larger
-- Enable public access (or configure VPC)
-- Note connection details for `DATABASE_URL`
-
-### 2. Create S3 Bucket
-```bash
-aws s3 mb s3://your-bucket-name --region your-region
-```
-
-### 3. Create Rekognition Collection
-```bash
-aws rekognition create-collection --collection-id attendance-faces --region your-region
-```
-
-### 4. Verify Setup
-```bash
-npm run db:verify
-```
-
-## 🚢 Deployment
-
-### Deploy to Railway (Recommended)
-1. Push code to GitHub
-2. Connect repository to Railway  
-3. Add environment variables in Railway dashboard
-4. Deploy automatically on every push
-
-### Deploy to Other Platforms
-- AWS App Runner
-- AWS ECS/Fargate
-- AWS EC2 with PM2
-
-Configuration files included:
-- `nixpacks.toml` - Railway/Nixpacks build config
-- `railway.json` - Railway deployment config
-
-## 💰 AWS Costs
-
-**Free Tier Includes:**
-- RDS: 750 hours/month (db.t3.micro)
-- S3: 5GB storage
-- Rekognition: 5,000 faces/month
-
-**Typical Monthly Cost:**
-- < $5 for small teams (< 50 users)
-- Scales with usage
-
-Monitor costs: https://console.aws.amazon.com/billing/
-
-## 📝 API Endpoints
-
-### Authentication
-- `POST /api/login` - User login
-- `POST /api/logout` - User logout
-- `POST /api/register` - User registration
-
-### Attendance
-- `POST /api/verify-face` - AWS Rekognition face verification
-- `POST /api/clock-in` - Clock in
-- `POST /api/clock-out` - Clock out
-- `GET /api/attendance` - Get records
-
-### Management
-- `GET /api/employees` - List employees
-- `POST /api/employees/:id/face-image` - Upload face (AWS S3 + Rekognition)
-- `GET /api/locations` - List locations
-- `POST /api/locations` - Create location
-
-## 🆘 Troubleshooting
-
-**Database issues:**
-```bash
-npm run db:verify
-```
-
-**AWS issues:**
-```bash
-npm run aws:test
-```
-
-**Import errors:**
-```bash
-npm run check
-```
-
-
-## 🎉 Changelog
-
-### Latest (November 2025)
-- ✅ **Migrated to AWS**: Replaced Python/DeepFace with AWS Rekognition
-- ✅ **Cloud Storage**: Face images stored in AWS S3
-- ✅ **99.9% Accuracy**: Enterprise-grade face recognition
-- ✅ **Faster Processing**: No more Python process overhead
-- ✅ **Better Scalability**: Auto-scaling AWS infrastructure
-- ✅ **Production Ready**: Fully cloud-based architecture
-
-### Previous
-- Multi-role access control
-- Location-based verification
-- Real-time analytics
-- Secure session management
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch
-3. Commit changes
-4. Push to branch
-5. Open Pull Request
-
-## 📞 Support
-
-- Issues: GitHub Issues  
-- AWS Documentation: https://docs.aws.amazon.com
+**Live at:** [clockinpro.autostrata.ai](https://clockinpro.autostrata.ai)
 
 ---
 
-**Built with ❤️ using AWS for secure, scalable workforce management.**
+## Technology Stack
 
-**Powered by:** AWS Rekognition | AWS S3 | AWS RDS | Node.js | React | TypeScript
+| Layer | Technology |
+|---|---|
+| **Runtime** | Node.js 20, TypeScript |
+| **Server** | Express 4, express-session + passport-local |
+| **Database** | PostgreSQL (Neon `@neondatabase/serverless` in prod) |
+| **ORM** | Drizzle ORM + drizzle-kit |
+| **Frontend** | React 18, Vite 5 |
+| **UI** | shadcn/ui, Tailwind CSS, Framer Motion |
+| **State** | TanStack Query v5 |
+| **Routing** | Wouter |
+| **Billing** | Stripe (Checkout, Customer Portal, Webhooks) |
+| **Face Detection** | face-api.js (browser-side) |
+| **Face Matching** | Cosine similarity (server-side, threshold 0.80) |
+| **Deployment** | Railway (Nixpacks) |
+
+---
+
+## How Face Matching Actually Works
+
+There is **no cloud face-recognition API** involved. No AWS Rekognition, no Azure Face, no per-match cost.
+
+### Registration
+1. The employee opens the face-registration page in their browser.
+2. **face-api.js** (running entirely in the browser via `client/public/models/`) detects the face and extracts a 128-dimensional descriptor (embedding).
+3. The embedding is sent to the server along with a base64-encoded snapshot of the face image.
+4. The server L2-normalises the embedding and stores it in the `users.faceEmbedding` column. The face image is stored as a base64 data URI in `users.faceImageUrl`.
+
+### Clock-In / Clock-Out
+1. The employee's browser captures a webcam frame and runs face-api.js to extract a probe embedding.
+2. The probe embedding is sent to the server.
+3. The server loads the registered embedding from the database, L2-normalises both vectors, and computes the **Euclidean distance** between them (equivalent to cosine distance on normalised vectors).
+4. If the distance is within the configured threshold (≤ 0.25 for acceptance, with confidence tiers at 0.15 / 0.20 / 0.25), the match is accepted.
+5. The server also validates GPS coordinates against the assigned geofence before recording the attendance event.
+
+### Why this approach?
+- **Zero per-match cost** — all computation is local.
+- **Privacy** — face data never leaves your infrastructure.
+- **Simplicity** — no cloud credentials to manage for face matching.
+- **Speed** — browser-side detection is near-instant; server comparison is a single dot-product.
+
+> **Implementation:** see [`server/lib/faceCompare.ts`](server/lib/faceCompare.ts) for the matching logic.
+
+---
+
+## Setup
+
+### Prerequisites
+- Node.js 20+
+- PostgreSQL database (local or [Neon](https://neon.tech) for serverless)
+
+### 1. Clone and install
+
+```bash
+git clone <repository-url>
+cd AttendanceFaceSyncWeb
+npm install
+```
+
+### 2. Configure environment variables
+
+Copy `.env.example` to `.env` and fill in the values:
+
+```env
+# Database (required)
+DATABASE_URL=postgresql://user:pass@host:5432/dbname
+
+# Session secret (required — use a random 64+ character string)
+SESSION_SECRET=your-random-secret
+
+# Environment
+NODE_ENV=development
+PORT=5000
+
+# Stripe billing (required for subscriptions)
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PRICE_ID_MONTHLY=price_...
+STRIPE_PRICE_ID_ANNUAL=price_...
+
+# Transactional email (required for invitations — Task 2)
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=noreply@yourdomain.com
+```
+
+### 3. Push the database schema
+
+```bash
+npm run db:push
+```
+
+### 4. Start the dev server
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:5000](http://localhost:5000).
+
+---
+
+## Available Scripts
+
+```bash
+npm run dev          # Start development server (tsx, hot-reload)
+npm run build        # Production build (Vite + esbuild)
+npm run start        # Start production server (node dist/index.js)
+npm run check        # TypeScript type-checking (tsc)
+npm run db:push      # Push Drizzle schema to the database
+npm run db:verify    # Verify database schema
+```
+
+---
+
+## Multi-Tenancy
+
+Every tenant-scoped table has an `organizationId` (or `organisationId` — both spellings exist in the schema; this is a known inconsistency, not a bug to "fix" without a migration plan). All queries are scoped by the authenticated user's organisation.
+
+---
+
+## Authentication & Authorisation
+
+- **Session-based** via `express-session` + `passport-local`.
+- Passwords hashed with `bcryptjs`.
+- Role helpers exported from `server/auth.ts`: `requireAuth`, `requireManager`, `requireAdmin`.
+
+---
+
+## Trial & Billing
+
+- **14-day free trial** starts on organisation creation (`organizations.trialEndsAt`).
+- **Entitlement gating** via `server/middleware/entitlement.ts` — blocks API routes unless the trial is active OR a paying Stripe subscription exists.
+- **Pricing:**
+  - **Monthly:** £3.50 per employee per month
+  - **Annual:** £3.00 per employee per month (billed annually)
+  - Admin and manager seats are **free** — only employee seats are billable.
+- **Stripe integration:** Checkout, Customer Portal, and Webhooks (with idempotency via `webhook_events` table) in `server/routes/billing.routes.ts`.
+
+---
+
+## Deployment
+
+**Platform:** Railway (Nixpacks)
+**Database:** Neon (serverless PostgreSQL)
+**Domain:** `clockinpro.autostrata.ai` (custom domain on the Railway service)
+
+Configuration files:
+- `nixpacks.toml` — Railway/Nixpacks build config
+- `railway.json` — Railway deployment config
+
+No AWS services are used.
+
+---
+
+## Project Structure
+
+```
+├── client/                  # React frontend (Vite)
+│   ├── public/models/       # face-api.js model weights
+│   └── src/
+│       ├── components/      # UI components (shadcn/ui)
+│       ├── hooks/           # Custom React hooks
+│       ├── lib/             # Client utilities
+│       └── pages/           # Route pages
+├── server/
+│   ├── auth.ts              # Passport session auth
+│   ├── routes.ts            # Main API routes
+│   ├── storage.ts           # Database access layer
+│   ├── lib/
+│   │   └── faceCompare.ts   # Face embedding comparison
+│   ├── middleware/
+│   │   └── entitlement.ts   # Trial / subscription gating
+│   └── routes/
+│       └── billing.routes.ts # Stripe billing routes
+├── shared/                  # Shared types & schema (Drizzle)
+└── scripts/                 # DB verification & utilities
+```
+
+---
+
+## What's NOT in the Box
+
+Being upfront about current limitations:
+
+- **No SSO** — authentication is username/password only. No SAML, OIDC, or social login.
+- **No native mobile app** — the system is a responsive web app. No iOS/Android app in the stores.
+- **No on-premises deployment** — designed for Railway + Neon. Self-hosting is possible but unsupported.
+- **No offline mode** — requires an internet connection for every clock-in.
+- **No multi-language support** — English (UK) only.
+- **No audit log export** — attendance data is viewable in-app but there's no CSV/PDF export yet.
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/your-feature`)
+3. Make changes and run `npm run check` to verify types
+4. Commit and push
+5. Open a Pull Request
+
+---
+
+## Support
+
+- **Issues:** GitHub Issues
+- **Documentation:** This README
+
+---
+
+Built by [AutoStrata](https://autostrata.ai) · Powered by face-api.js, Express, React, and Stripe.

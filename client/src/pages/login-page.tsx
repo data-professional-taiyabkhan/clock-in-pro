@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,19 +6,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { loginSchema, type LoginData } from "@shared/schema";
-import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { login } from "@/lib/api";
-import { useLocation } from "wouter";
-import { apiRequest } from "@/lib/queryClient";
-import { Building2, ArrowLeft } from "lucide-react";
-import type { Organization } from "@shared/schema";
+import { useLocation, Link } from "wouter";
+import { Clock, ArrowRight } from "lucide-react";
 
 export default function LoginPage() {
   const [, setLocation] = useLocation();
   const [error, setError] = useState<string>("");
-  const [selectedOrganization, setSelectedOrganization] = useState<Organization | null>(null);
   const queryClient = useQueryClient();
 
   const form = useForm<LoginData>({
@@ -29,34 +25,12 @@ export default function LoginPage() {
     },
   });
 
-  const { data: organizations = [] } = useQuery({
-    queryKey: ["/api/organizations"],
-    queryFn: () => apiRequest("/api/organizations"),
-  });
-
-  // Get organization selection from localStorage
-  useEffect(() => {
-    const selectedOrgId = localStorage.getItem("selectedOrganizationId");
-    if (selectedOrgId && organizations.length > 0) {
-      // Find the organization from the list
-      const orgId = parseInt(selectedOrgId);
-      const foundOrg = organizations.find((org: Organization) => org.id === orgId);
-      if (foundOrg) {
-        setSelectedOrganization(foundOrg);
-      }
-    }
-  }, [organizations]);
-
   const loginMutation = useMutation({
     mutationFn: async (data: LoginData) => {
-      // Include organization ID in login if available
-      const organizationId = selectedOrganization?.id;
-      return await login(data.email, data.password, organizationId);
+      return await login(data.email, data.password);
     },
     onSuccess: (user) => {
       queryClient.setQueryData(["/api/user"], user);
-      // Clear the selected organization from localStorage
-      localStorage.removeItem("selectedOrganizationId");
       setLocation("/");
     },
     onError: (error: Error) => {
@@ -69,51 +43,23 @@ export default function LoginPage() {
     loginMutation.mutate(data);
   };
 
-  const handleBackToSelection = () => {
-    localStorage.removeItem("selectedOrganizationId");
-    setLocation("/");
-  };
-
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 px-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">
-            Attendance System
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 px-4">
+      <Card className="w-full max-w-md shadow-xl border-0">
+        <CardHeader className="text-center space-y-1 pb-2">
+          <div className="flex items-center justify-center mb-3">
+            <div className="h-14 w-14 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl flex items-center justify-center">
+              <Clock className="h-7 w-7 text-white" />
+            </div>
+          </div>
+          <CardTitle className="text-2xl font-bold">
+            Welcome back
           </CardTitle>
-          <CardDescription className="text-center">
-            Sign in to track your attendance
+          <CardDescription>
+            Sign in to Clock-In Pro
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {/* Organization Selection Display */}
-          {selectedOrganization && (
-            <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Building2 className="h-5 w-5 text-blue-600" />
-                  <div>
-                    <h3 className="font-semibold text-blue-900 dark:text-blue-100">
-                      {selectedOrganization.name}
-                    </h3>
-                    <p className="text-sm text-blue-600 dark:text-blue-300">
-                      {selectedOrganization.currentEmployees} employees
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleBackToSelection}
-                  className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                >
-                  <ArrowLeft className="h-4 w-4 mr-1" />
-                  Change
-                </Button>
-              </div>
-            </div>
-          )}
-
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             {error && (
               <Alert variant="destructive">
@@ -121,12 +67,12 @@ export default function LoginPage() {
               </Alert>
             )}
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="email">Email</Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="Enter your email"
+                placeholder="you@company.com"
                 {...form.register("email")}
               />
               {form.formState.errors.email && (
@@ -136,7 +82,7 @@ export default function LoginPage() {
               )}
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="password">Password</Label>
               <Input
                 id="password"
@@ -149,20 +95,33 @@ export default function LoginPage() {
                   {form.formState.errors.password.message}
                 </p>
               )}
+              <div className="text-right">
+                <Link href="/forgot-password" className="text-xs text-blue-600 hover:underline">
+                  Forgot password?
+                </Link>
+              </div>
             </div>
 
             <Button
               type="submit"
-              className="w-full"
+              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-medium py-2.5"
               disabled={loginMutation.isPending}
             >
-              {loginMutation.isPending ? "Signing in..." : "Sign In"}
+              {loginMutation.isPending ? "Signing in..." : "Sign in"}
+              {!loginMutation.isPending && <ArrowRight className="h-4 w-4 ml-2" />}
             </Button>
           </form>
 
-          <div className="mt-6 text-center text-sm text-gray-600 dark:text-gray-400">
-            <p>Employee? Contact your manager for account setup.</p>
-            <p className="mt-1">Manager/Admin? Use your assigned credentials.</p>
+          <div className="mt-6 text-center space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Don't have an account?{" "}
+              <Link href="/signup" className="text-blue-600 hover:underline font-medium">
+                Start free trial
+              </Link>
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Employee? Ask your admin for your organisation's login link.
+            </p>
           </div>
         </CardContent>
       </Card>

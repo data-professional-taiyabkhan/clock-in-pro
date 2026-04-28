@@ -196,6 +196,18 @@ export const employeeConsents = pgTable("employee_consents", {
   revokedAt: timestamp("revoked_at"),
 });
 
+// ──────────────────────────────────────────────
+// Password Reset Tokens
+// ──────────────────────────────────────────────
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  token: varchar("token").unique().notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // ══════════════════════════════════════════════
 // RELATIONS
 // ══════════════════════════════════════════════
@@ -493,3 +505,4 @@ export type SignupData = z.infer<typeof signupSchema>;
 export type SetupPinData = z.infer<typeof setupPinSchema>;
 export type VerifyPinData = z.infer<typeof verifyPinSchema>;
 export type ConsentData = z.infer<typeof consentSchema>;
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;

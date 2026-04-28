@@ -2,7 +2,9 @@ import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import type { Express, Request, Response, NextFunction } from "express";
 import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
 import type { User } from "@shared/schema";
+import { pool } from "./db";
 
 // Extend Express Request type
 declare global {
@@ -22,17 +24,24 @@ async function comparePasswords(supplied: string, stored: string): Promise<boole
 }
 
 export function setupAuth(app: Express) {
+  const PgStore = connectPgSimple(session);
+
   app.use(session({
+    store: new PgStore({
+      pool: pool,                    // Use the existing DB pool
+      tableName: "user_sessions",    // Table name for sessions
+      createTableIfMissing: true,    // Auto-create table on first run
+      pruneSessionInterval: 60 * 15, // Clean expired sessions every 15 min
+    }),
     secret: process.env.SESSION_SECRET || "your-secret-key-here",
-    store: storage.sessionStore,
     resave: false,
     saveUninitialized: false,
     cookie: {
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      sameSite: 'lax'
-    }
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days — persistent like social media apps
+      sameSite: "lax",
+    },
   }));
 
   // Authentication middleware — load user from session

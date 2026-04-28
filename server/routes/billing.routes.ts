@@ -8,7 +8,7 @@ async function getStripe() {
     const Stripe = (await import("stripe")).default;
     const key = process.env.STRIPE_SECRET_KEY;
     if (!key) throw new Error("STRIPE_SECRET_KEY is not set");
-    return new Stripe(key, { apiVersion: "2024-12-18.acacia" as any });
+    return new Stripe(key, { apiVersion: "2026-04-22.dahlia" as any });
 }
 
 export function registerBillingRoutes(app: Express) {

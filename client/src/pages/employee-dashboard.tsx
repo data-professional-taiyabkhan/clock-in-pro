@@ -5,13 +5,14 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Clock, MapPin, Camera, LogOut, Upload, BarChart3, Key } from "lucide-react";
+import { Clock, MapPin, Camera, LogOut, Upload, BarChart3, Key, Settings } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { EmployeeAnalyticsDashboard } from "@/components/employee-analytics-dashboard";
 import { ChangePasswordDialog } from "@/components/change-password-dialog";
+import EmployeeSettings from "@/pages/employee-settings";
 
 interface UserLocation {
   latitude?: number;
@@ -24,7 +25,7 @@ export default function EmployeeDashboard() {
   const [capturedImage, setCapturedImage] = useState<string>("");
   const [userLocation, setUserLocation] = useState<UserLocation>({});
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
-  
+
   console.log('Component render - isCapturing:', isCapturing, 'capturedImage:', !!capturedImage);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -108,18 +109,18 @@ export default function EmployeeDashboard() {
   // Face verification mutation
   const verifyFaceMutation = useMutation({
     mutationFn: async (data: { imageData: string; location?: UserLocation }) => {
-      const requestBody: any = { 
+      const requestBody: any = {
         imageData: data.imageData,
         action: todayAttendance?.record?.clockOutTime ? 'in' : (todayAttendance?.record?.clockInTime ? 'out' : 'in')
       };
-      
+
       if (data.location) {
         requestBody.location = {
           latitude: data.location.latitude?.toString(),
           longitude: data.location.longitude?.toString()
         };
       }
-      
+
       return await apiRequest("/api/verify-face", {
         method: "POST",
         body: JSON.stringify(requestBody),
@@ -216,17 +217,17 @@ export default function EmployeeDashboard() {
       console.log('Starting camera...');
       setIsCapturing(true);
       console.log('Set isCapturing to true');
-      
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          width: 640, 
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: 640,
           height: 480,
-          facingMode: "user" 
-        } 
+          facingMode: "user"
+        }
       });
       console.log('Camera stream obtained:', stream);
       streamRef.current = stream;
-      
+
       // Wait for next render cycle
       setTimeout(() => {
         if (videoRef.current && streamRef.current) {
@@ -241,7 +242,7 @@ export default function EmployeeDashboard() {
           console.log('videoRef or stream not available after timeout');
         }
       }, 100);
-      
+
     } catch (error) {
       console.error('Error accessing camera:', error);
       setIsCapturing(false);
@@ -263,10 +264,10 @@ export default function EmployeeDashboard() {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         context.drawImage(video, 0, 0);
-        
+
         const imageData = canvas.toDataURL('image/jpeg', 0.8);
         setCapturedImage(imageData);
-        
+
         // Stop camera
         const stream = video.srcObject as MediaStream;
         stream?.getTracks().forEach(track => track.stop());
@@ -289,12 +290,12 @@ export default function EmployeeDashboard() {
 
   const handleFaceCheckIn = async () => {
     if (!capturedImage) return;
-    
+
     try {
       // Always get fresh location for employees
       const location = await getUserLocation();
       console.log('Location obtained for verification:', location);
-      
+
       verifyFaceMutation.mutate({
         imageData: capturedImage,
         location: location
@@ -343,7 +344,7 @@ export default function EmployeeDashboard() {
         </div>
 
         <Tabs defaultValue="attendance" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="attendance" className="flex items-center gap-2">
               <Clock className="h-4 w-4" />
               Attendance
@@ -351,6 +352,10 @@ export default function EmployeeDashboard() {
             <TabsTrigger value="analytics" className="flex items-center gap-2">
               <BarChart3 className="h-4 w-4" />
               My Hours
+            </TabsTrigger>
+            <TabsTrigger value="settings" className="flex items-center gap-2">
+              <Settings className="h-4 w-4" />
+              Settings
             </TabsTrigger>
           </TabsList>
 
@@ -360,19 +365,19 @@ export default function EmployeeDashboard() {
               <Alert>
                 <Camera className="h-4 w-4" />
                 <AlertDescription>
-                  Your face image hasn't been registered yet. Please contact your manager to set up your face image for check-in.
+                  Your face image hasn't been registered yet. Please contact your admin to set up your face image for check-in.
                 </AlertDescription>
               </Alert>
             )}
-            
+
             {user.faceImageUrl ? (
               <Alert>
                 <Camera className="h-4 w-4" />
                 <AlertDescription>
                   Face image registered successfully. You can now use face check-in.
                   <div className="mt-2">
-                    <img 
-                      src={user.faceImageUrl} 
+                    <img
+                      src={user.faceImageUrl}
                       alt="Your registered face"
                       className="w-16 h-16 rounded-full object-cover border"
                     />
@@ -383,176 +388,176 @@ export default function EmployeeDashboard() {
 
             {/* Today's Status */}
             <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="h-5 w-5" />
-              Today's Attendance
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Status</p>
-                <Badge variant={todayAttendance?.isClockedIn ? "default" : "secondary"}>
-                  {todayAttendance?.isClockedIn ? "Clocked In" : "Not Clocked In"}
-                </Badge>
-              </div>
-              
-              {todayAttendance?.record?.clockInTime && (
-                <div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Clock In Time</p>
-                  <p className="font-medium">
-                    {format(new Date(todayAttendance.record.clockInTime), "h:mm a")}
-                  </p>
-                </div>
-              )}
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Clock className="h-5 w-5" />
+                  Today's Attendance
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Status</p>
+                    <Badge variant={todayAttendance?.isClockedIn ? "default" : "secondary"}>
+                      {todayAttendance?.isClockedIn ? "Clocked In" : "Not Clocked In"}
+                    </Badge>
+                  </div>
 
-              {todayAttendance?.record?.clockOutTime && (
-                <div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Clock Out Time</p>
-                  <p className="font-medium">
-                    {format(new Date(todayAttendance.record.clockOutTime), "h:mm a")}
-                  </p>
-                </div>
-              )}
-            </div>
+                  {todayAttendance?.record?.clockInTime && (
+                    <div>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">Clock In Time</p>
+                      <p className="font-medium">
+                        {format(new Date(todayAttendance.record.clockInTime), "h:mm a")}
+                      </p>
+                    </div>
+                  )}
 
-            <div className="mt-4 space-y-2">
-              {user.faceImageUrl ? (
-                <div className="space-y-2">
-                  {!isCapturing && !capturedImage && (
+                  {todayAttendance?.record?.clockOutTime && (
+                    <div>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">Clock Out Time</p>
+                      <p className="font-medium">
+                        {format(new Date(todayAttendance.record.clockOutTime), "h:mm a")}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {user.faceImageUrl ? (
                     <div className="space-y-2">
-                      <Button 
-                        onClick={() => {
-                          console.log('Face check-in button clicked, current isCapturing:', isCapturing);
-                          startCamera();
-                        }} 
+                      {!isCapturing && !capturedImage && (
+                        <div className="space-y-2">
+                          <Button
+                            onClick={() => {
+                              console.log('Face check-in button clicked, current isCapturing:', isCapturing);
+                              startCamera();
+                            }}
+                            className="w-full"
+                          >
+                            <Camera className="h-4 w-4 mr-2" />
+                            Start Face Check-In
+                          </Button>
+
+
+
+                        </div>
+                      )}
+
+                      {isCapturing && (
+                        <div className="space-y-2">
+                          <div className="text-center text-green-600 mb-2">
+                            Camera is active
+                          </div>
+                          <div className="flex justify-center">
+                            <video
+                              ref={videoRef}
+                              autoPlay
+                              playsInline
+                              muted
+                              width="300"
+                              height="225"
+                              style={{
+                                backgroundColor: '#000',
+                                display: 'block'
+                              }}
+                              className="rounded-lg border-2 border-green-300"
+                            />
+                          </div>
+                          <div className="text-center text-sm text-gray-600">
+                            Position your face in the camera view and click capture when ready
+                          </div>
+                          <Button onClick={captureImage} className="w-full">
+                            Capture Face
+                          </Button>
+                        </div>
+                      )}
+
+                      {capturedImage && (
+                        <div className="space-y-2">
+                          <img
+                            src={capturedImage}
+                            alt="Captured face"
+                            className="w-full max-w-sm mx-auto rounded-lg"
+                          />
+                          <div className="flex gap-2">
+                            <Button
+                              onClick={handleFaceCheckIn}
+                              disabled={verifyFaceMutation.isPending || clockInMutation.isPending}
+                              className="flex-1"
+                            >
+                              {verifyFaceMutation.isPending || clockInMutation.isPending
+                                ? "Processing..."
+                                : "Clock In"
+                              }
+                            </Button>
+                            <Button
+                              onClick={() => setCapturedImage("")}
+                              variant="outline"
+                            >
+                              Retake
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {/* Show clock-out button only if currently clocked in */}
+                  {user.faceImageUrl && todayAttendance?.isClockedIn && (
+                    <div className="space-y-2 mt-4">
+                      <div className="text-center text-green-600 font-medium">
+                        ✓ Currently clocked in
+                      </div>
+                      <Button
+                        onClick={() => clockOutMutation.mutate()}
+                        disabled={clockOutMutation.isPending}
+                        variant="destructive"
                         className="w-full"
                       >
-                        <Camera className="h-4 w-4 mr-2" />
-                        Start Face Check-In
-                      </Button>
-                      
-
-
-                    </div>
-                  )}
-
-                  {isCapturing && (
-                    <div className="space-y-2">
-                      <div className="text-center text-green-600 mb-2">
-                        Camera is active
-                      </div>
-                      <div className="flex justify-center">
-                        <video
-                          ref={videoRef}
-                          autoPlay
-                          playsInline
-                          muted
-                          width="300"
-                          height="225"
-                          style={{ 
-                            backgroundColor: '#000',
-                            display: 'block'
-                          }}
-                          className="rounded-lg border-2 border-green-300"
-                        />
-                      </div>
-                      <div className="text-center text-sm text-gray-600">
-                        Position your face in the camera view and click capture when ready
-                      </div>
-                      <Button onClick={captureImage} className="w-full">
-                        Capture Face
+                        <LogOut className="h-4 w-4 mr-2" />
+                        {clockOutMutation.isPending ? "Clocking Out..." : "Clock Out"}
                       </Button>
                     </div>
                   )}
+                </div>
+              </CardContent>
+            </Card>
 
-                  {capturedImage && (
-                    <div className="space-y-2">
-                      <img
-                        src={capturedImage}
-                        alt="Captured face"
-                        className="w-full max-w-sm mx-auto rounded-lg"
-                      />
-                      <div className="flex gap-2">
-                        <Button
-                          onClick={handleFaceCheckIn}
-                          disabled={verifyFaceMutation.isPending || clockInMutation.isPending}
-                          className="flex-1"
-                        >
-                          {verifyFaceMutation.isPending || clockInMutation.isPending
-                            ? "Processing..."
-                            : "Clock In"
-                          }
-                        </Button>
-                        <Button
-                          onClick={() => setCapturedImage("")}
-                          variant="outline"
-                        >
-                          Retake
-                        </Button>
+            {/* Recent Attendance */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Recent Attendance</CardTitle>
+                <CardDescription>Your attendance history</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {attendanceRecords?.slice(0, 5).map((record: any) => (
+                    <div
+                      key={record.id}
+                      className="flex justify-between items-center p-3 border rounded-lg"
+                    >
+                      <div>
+                        <p className="font-medium">{record.date}</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                          {format(new Date(record.clockInTime), "h:mm a")}
+                          {record.clockOutTime && (
+                            <> - {format(new Date(record.clockOutTime), "h:mm a")}</>
+                          )}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        {record.checkInMethod === "manual" && (
+                          <Badge variant="outline">Manual</Badge>
+                        )}
+                        {record.clockOutTime && (
+                          <p className="text-sm font-medium">{record.totalHours}</p>
+                        )}
                       </div>
                     </div>
-                  )}
+                  ))}
                 </div>
-              ) : null}
-
-              {/* Show clock-out button only if currently clocked in */}
-              {user.faceImageUrl && todayAttendance?.isClockedIn && (
-                <div className="space-y-2 mt-4">
-                  <div className="text-center text-green-600 font-medium">
-                    ✓ Currently clocked in
-                  </div>
-                  <Button
-                    onClick={() => clockOutMutation.mutate()}
-                    disabled={clockOutMutation.isPending}
-                    variant="destructive"
-                    className="w-full"
-                  >
-                    <LogOut className="h-4 w-4 mr-2" />
-                    {clockOutMutation.isPending ? "Clocking Out..." : "Clock Out"}
-                  </Button>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Recent Attendance */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Attendance</CardTitle>
-            <CardDescription>Your attendance history</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {attendanceRecords?.slice(0, 5).map((record: any) => (
-                <div
-                  key={record.id}
-                  className="flex justify-between items-center p-3 border rounded-lg"
-                >
-                  <div>
-                    <p className="font-medium">{record.date}</p>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      {format(new Date(record.clockInTime), "h:mm a")}
-                      {record.clockOutTime && (
-                        <> - {format(new Date(record.clockOutTime), "h:mm a")}</>
-                      )}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    {record.checkInMethod === "manual" && (
-                      <Badge variant="outline">Manual</Badge>
-                    )}
-                    {record.clockOutTime && (
-                      <p className="text-sm font-medium">{record.totalHours}</p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
             {/* Hidden canvas for image capture */}
             <canvas ref={canvasRef} className="hidden" />
@@ -561,12 +566,16 @@ export default function EmployeeDashboard() {
           <TabsContent value="analytics">
             <EmployeeAnalyticsDashboard />
           </TabsContent>
+
+          <TabsContent value="settings">
+            <EmployeeSettings />
+          </TabsContent>
         </Tabs>
       </div>
 
-      <ChangePasswordDialog 
-        open={showPasswordDialog} 
-        onOpenChange={setShowPasswordDialog} 
+      <ChangePasswordDialog
+        open={showPasswordDialog}
+        onOpenChange={setShowPasswordDialog}
       />
     </div>
   );

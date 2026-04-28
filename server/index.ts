@@ -7,7 +7,9 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { registerBillingRoutes } from "./routes/billing.routes";
 import { registerPinRoutes } from "./routes/pin.routes";
+import { registerPasswordRoutes } from "./routes/password.routes";
 import { requireActiveSubscription } from "./middleware/entitlement";
+import { startTrialExpiryReminderJob } from "./jobs/trial-expiry-reminder";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
@@ -60,6 +62,9 @@ app.use((req, res, next) => {
   // Register PIN and consent routes
   registerPinRoutes(app);
 
+  // Register password reset routes
+  registerPasswordRoutes(app);
+
   // Apply entitlement enforcement to all subsequent API routes
   app.use("/api", requireActiveSubscription);
 
@@ -85,5 +90,8 @@ app.use((req, res, next) => {
   const port = parseInt(process.env.PORT || "5000");
   server.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
+
+    // Start background jobs
+    startTrialExpiryReminderJob();
   });
 })();

@@ -42,9 +42,23 @@ export async function setupVite(app: Express, server: Server) {
     appType: "custom",
   });
 
-  app.use(vite.middlewares);
+  // Wrap Vite middlewares so they never process API routes
+  app.use((req, res, next) => {
+    if (req.originalUrl.startsWith("/api")) {
+      return next();
+    }
+    vite.middlewares.handle(req, res, next);
+  });
+
   app.use("*", async (req, res, next) => {
     const url = req.originalUrl;
+    console.log(`[Vite Catch-All] Intercepted: originalUrl=${req.originalUrl}, path=${req.path}`);
+
+    // Never intercept API routes — they are handled by Express
+    if (url.startsWith("/api") || req.path.startsWith("/api")) {
+      console.log(`[Vite Catch-All] Skipping API route: ${url}`);
+      return next();
+    }
 
     try {
       const clientTemplate = path.resolve(
