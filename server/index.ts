@@ -14,6 +14,9 @@ import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
 
+// Trust first proxy (Railway, Heroku, etc.) — required for secure cookies behind reverse proxy
+app.set("trust proxy", 1);
+
 // Raw body parsing for Stripe webhooks (must be before express.json)
 app.use("/api/billing/webhook", express.raw({ type: "application/json" }), (req: any, _res, next) => {
   req.rawBody = req.body;
