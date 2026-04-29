@@ -111,9 +111,9 @@ export function registerBillingRoutes(app: Express) {
                             stripeSubscriptionId: sub.id,
                             stripePriceId: (sub.items.data[0]?.price?.id) || "",
                             status: sub.status,
-                            currentPeriodEnd: new Date(sub.current_period_end * 1000),
+                            currentPeriodEnd: safeDate(sub.current_period_end) || new Date(),
                             cancelAtPeriodEnd: sub.cancel_at_period_end,
-                            trialEndsAt: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
+                            trialEndsAt: safeDate(sub.trial_end),
                             activeEmployeeQuantity: sub.items.data[0]?.quantity || 0,
                         });
                     }
@@ -128,9 +128,9 @@ export function registerBillingRoutes(app: Express) {
                         await storage.updateSubscription(sub.id, {
                             status: sub.status,
                             stripePriceId: sub.items?.data?.[0]?.price?.id || existingSub.stripePriceId,
-                            currentPeriodEnd: new Date(sub.current_period_end * 1000),
+                            currentPeriodEnd: safeDate(sub.current_period_end) || new Date(),
                             cancelAtPeriodEnd: sub.cancel_at_period_end,
-                            trialEndsAt: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
+                            trialEndsAt: safeDate(sub.trial_end),
                             activeEmployeeQuantity: sub.items?.data?.[0]?.quantity || 0,
                         });
                     } else {
@@ -142,9 +142,9 @@ export function registerBillingRoutes(app: Express) {
                                 stripeSubscriptionId: sub.id,
                                 stripePriceId: sub.items?.data?.[0]?.price?.id || "",
                                 status: sub.status,
-                                currentPeriodEnd: new Date(sub.current_period_end * 1000),
+                                currentPeriodEnd: safeDate(sub.current_period_end) || new Date(),
                                 cancelAtPeriodEnd: sub.cancel_at_period_end,
-                                trialEndsAt: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
+                                trialEndsAt: safeDate(sub.trial_end),
                                 activeEmployeeQuantity: sub.items?.data?.[0]?.quantity || 0,
                             });
                         }
@@ -282,6 +282,28 @@ export function registerBillingRoutes(app: Express) {
 }
 
 /**
+ * Safely convert a Stripe timestamp (unix seconds, ms, Date, or ISO string) to a JS Date.
+ * Returns null if the value is falsy or can't be parsed.
+ */
+function safeDate(val: any): Date | null {
+    if (!val) return null;
+    // Already a Date
+    if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+    // ISO string
+    if (typeof val === "string") {
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? null : d;
+    }
+    // Unix timestamp (seconds if < 1e12, milliseconds if >= 1e12)
+    if (typeof val === "number") {
+        const ms = val < 1e12 ? val * 1000 : val;
+        const d = new Date(ms);
+        return isNaN(d.getTime()) ? null : d;
+    }
+    return null;
+}
+
+/**
  * Pull the latest subscription for an org directly from Stripe and upsert into DB.
  * Returns true if an active subscription was found and synced.
  */
@@ -307,16 +329,31 @@ async function syncSubscriptionFromStripe(orgId: number): Promise<boolean> {
 
     // Find the most relevant subscription (active/trialing first)
     const activeSub = subs.data.find(s => ["active", "trialing"].includes(s.status)) || subs.data[0];
+    const raw = activeSub as any;
+
+    // Debug log the shape of the Stripe subscription
+    console.log(`[billing/sync] Stripe sub shape: id=${activeSub.id}, status=${activeSub.status}, ` +
+        `current_period_end=${raw.current_period_end} (type: ${typeof raw.current_period_end}), ` +
+        `trial_end=${raw.trial_end} (type: ${typeof raw.trial_end}), ` +
+        `cancel_at_period_end=${activeSub.cancel_at_period_end}`);
+
+    const currentPeriodEnd = safeDate(raw.current_period_end);
+    const trialEndsAt = safeDate(raw.trial_end);
+
+    if (!currentPeriodEnd) {
+        console.error(`[billing/sync] Could not parse current_period_end: ${raw.current_period_end}`);
+        return false;
+    }
 
     const existingSub = await storage.getSubscriptionByStripeId(activeSub.id);
     const subData = {
         stripeSubscriptionId: activeSub.id,
-        stripePriceId: (activeSub as any).items?.data?.[0]?.price?.id || "",
+        stripePriceId: raw.items?.data?.[0]?.price?.id || "",
         status: activeSub.status,
-        currentPeriodEnd: new Date((activeSub as any).current_period_end * 1000),
+        currentPeriodEnd,
         cancelAtPeriodEnd: activeSub.cancel_at_period_end,
-        trialEndsAt: (activeSub as any).trial_end ? new Date((activeSub as any).trial_end * 1000) : null,
-        activeEmployeeQuantity: (activeSub as any).items?.data?.[0]?.quantity || 0,
+        trialEndsAt,
+        activeEmployeeQuantity: raw.items?.data?.[0]?.quantity || 0,
     };
 
     if (existingSub) {
@@ -331,3 +368,4 @@ async function syncSubscriptionFromStripe(orgId: number): Promise<boolean> {
     console.log(`[billing/sync] Synced subscription ${activeSub.id} (${activeSub.status}) for org ${orgId}`);
     return ["active", "trialing"].includes(activeSub.status);
 }
+
