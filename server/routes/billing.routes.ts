@@ -106,16 +106,16 @@ export function registerBillingRoutes(app: Express) {
                     const orgId = parseInt(session.metadata?.organisationId || "0");
                     if (orgId && session.subscription) {
                         const sub = await stripe.subscriptions.retrieve(session.subscription as string) as any;
-                        const items = sub.items?.data || [];
+                        const { rawPeriodEnd: pe, rawTrialEnd: te, cancelAtPeriodEnd: cap, priceId: pid, quantity: qty } = extractSubFields(sub);
                         await storage.createSubscription({
                             organisationId: orgId,
                             stripeSubscriptionId: sub.id,
-                            stripePriceId: items[0]?.price?.id || items[0]?.plan?.id || "",
+                            stripePriceId: pid,
                             status: sub.status,
-                            currentPeriodEnd: safeDate(subField(sub, "currentPeriodEnd", "current_period_end")) || new Date(),
-                            cancelAtPeriodEnd: subField(sub, "cancelAtPeriodEnd", "cancel_at_period_end") ?? false,
-                            trialEndsAt: safeDate(subField(sub, "trialEnd", "trial_end")),
-                            activeEmployeeQuantity: items[0]?.quantity || 0,
+                            currentPeriodEnd: safeDate(pe) || new Date(),
+                            cancelAtPeriodEnd: cap,
+                            trialEndsAt: safeDate(te),
+                            activeEmployeeQuantity: qty,
                         });
                     }
                     break;
@@ -126,29 +126,29 @@ export function registerBillingRoutes(app: Express) {
                     const existingSub = await storage.getSubscriptionByStripeId(sub.id);
 
                     if (existingSub) {
-                        const items = sub.items?.data || [];
+                        const { rawPeriodEnd: pe, rawTrialEnd: te, cancelAtPeriodEnd: cap, priceId: pid, quantity: qty } = extractSubFields(sub);
                         await storage.updateSubscription(sub.id, {
                             status: sub.status,
-                            stripePriceId: items[0]?.price?.id || items[0]?.plan?.id || existingSub.stripePriceId,
-                            currentPeriodEnd: safeDate(subField(sub, "currentPeriodEnd", "current_period_end")) || new Date(),
-                            cancelAtPeriodEnd: subField(sub, "cancelAtPeriodEnd", "cancel_at_period_end") ?? false,
-                            trialEndsAt: safeDate(subField(sub, "trialEnd", "trial_end")),
-                            activeEmployeeQuantity: items[0]?.quantity || 0,
+                            stripePriceId: pid || existingSub.stripePriceId,
+                            currentPeriodEnd: safeDate(pe) || new Date(),
+                            cancelAtPeriodEnd: cap,
+                            trialEndsAt: safeDate(te),
+                            activeEmployeeQuantity: qty,
                         });
                     } else {
                         // Find orgId via billing customer
                         const customer = await storage.getBillingCustomerByStripeId(sub.customer);
                         if (customer) {
-                            const items2 = sub.items?.data || [];
+                            const { rawPeriodEnd: pe2, rawTrialEnd: te2, cancelAtPeriodEnd: cap2, priceId: pid2, quantity: qty2 } = extractSubFields(sub);
                             await storage.createSubscription({
                                 organisationId: customer.organisationId,
                                 stripeSubscriptionId: sub.id,
-                                stripePriceId: items2[0]?.price?.id || items2[0]?.plan?.id || "",
+                                stripePriceId: pid2,
                                 status: sub.status,
-                                currentPeriodEnd: safeDate(subField(sub, "currentPeriodEnd", "current_period_end")) || new Date(),
-                                cancelAtPeriodEnd: subField(sub, "cancelAtPeriodEnd", "cancel_at_period_end") ?? false,
-                                trialEndsAt: safeDate(subField(sub, "trialEnd", "trial_end")),
-                                activeEmployeeQuantity: items2[0]?.quantity || 0,
+                                currentPeriodEnd: safeDate(pe2) || new Date(),
+                                cancelAtPeriodEnd: cap2,
+                                trialEndsAt: safeDate(te2),
+                                activeEmployeeQuantity: qty2,
                             });
                         }
                     }
@@ -307,11 +307,33 @@ function safeDate(val: any): Date | null {
 }
 
 /**
- * Read a Stripe subscription field that may be camelCase or snake_case
- * depending on the SDK/API version.
+ * Extract period-end, trial-end, cancel-at-period-end, price ID, and quantity
+ * from a Stripe subscription object. Handles the 2026-04-22.dahlia API where
+ * current_period_end moved from subscription root to items.data[0].
  */
-function subField(sub: any, camel: string, snake: string): any {
-    return sub[camel] !== undefined ? sub[camel] : sub[snake];
+function extractSubFields(sub: any) {
+    const items = sub.items?.data || [];
+    const firstItem = items[0] || {};
+
+    // current_period_end: moved to items.data[0] in 2026 API
+    const rawPeriodEnd = sub.current_period_end
+        ?? sub.currentPeriodEnd
+        ?? firstItem.current_period_end
+        ?? firstItem.currentPeriodEnd;
+
+    // trial_end stays at subscription level
+    const rawTrialEnd = sub.trial_end ?? sub.trialEnd ?? null;
+
+    // cancel_at_period_end stays at subscription level
+    const cancelAtPeriodEnd = sub.cancel_at_period_end ?? sub.cancelAtPeriodEnd ?? false;
+
+    // price ID
+    const priceId = firstItem.price?.id || firstItem.plan?.id || "";
+
+    // quantity
+    const quantity = firstItem.quantity || sub.quantity || 0;
+
+    return { rawPeriodEnd, rawTrialEnd, cancelAtPeriodEnd, priceId, quantity };
 }
 
 /**
@@ -340,23 +362,12 @@ async function syncSubscriptionFromStripe(orgId: number): Promise<boolean> {
 
     // Find the most relevant subscription (active/trialing first)
     const activeSub = subs.data.find(s => ["active", "trialing"].includes(s.status)) || subs.data[0];
-    const raw = activeSub as any;
 
-    // Debug: dump all top-level keys so we know the exact shape
-    console.log(`[billing/sync] Sub keys: ${Object.keys(raw).join(", ")}`);
-
-    // Read fields — try camelCase first (new API), then snake_case (legacy)
-    const rawPeriodEnd = subField(raw, "currentPeriodEnd", "current_period_end");
-    const rawTrialEnd = subField(raw, "trialEnd", "trial_end");
-    const rawCancelAtEnd = subField(raw, "cancelAtPeriodEnd", "cancel_at_period_end");
-    const rawItems = raw.items?.data || [];
-    const priceId = rawItems[0]?.price?.id || rawItems[0]?.plan?.id || "";
-    const quantity = rawItems[0]?.quantity || 0;
+    const { rawPeriodEnd, rawTrialEnd, cancelAtPeriodEnd, priceId, quantity } = extractSubFields(activeSub);
 
     console.log(`[billing/sync] id=${activeSub.id}, status=${activeSub.status}, ` +
         `periodEnd=${rawPeriodEnd} (${typeof rawPeriodEnd}), ` +
-        `trialEnd=${rawTrialEnd} (${typeof rawTrialEnd}), ` +
-        `cancelAtEnd=${rawCancelAtEnd}`);
+        `trialEnd=${rawTrialEnd}, cancelAtEnd=${cancelAtPeriodEnd}`);
 
     const currentPeriodEnd = safeDate(rawPeriodEnd);
     const trialEndsAt = safeDate(rawTrialEnd);
@@ -372,7 +383,7 @@ async function syncSubscriptionFromStripe(orgId: number): Promise<boolean> {
         stripePriceId: priceId,
         status: activeSub.status,
         currentPeriodEnd,
-        cancelAtPeriodEnd: rawCancelAtEnd ?? false,
+        cancelAtPeriodEnd,
         trialEndsAt,
         activeEmployeeQuantity: quantity,
     };
