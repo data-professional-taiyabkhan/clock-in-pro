@@ -227,8 +227,23 @@ export function registerBillingRoutes(app: Express) {
                 : 0;
 
             // Check subscription
-            const subscription = await storage.getSubscription(orgId);
-            const subActive = subscription && ["active", "trialing"].includes(subscription.status);
+            let subscription = await storage.getSubscription(orgId);
+            let subActive = subscription && ["active", "trialing"].includes(subscription.status);
+
+            // ── Fallback: if no active sub in DB, try syncing from Stripe directly ──
+            // This handles the case where webhooks haven't arrived yet (especially locally)
+            if (!subActive) {
+                try {
+                    const synced = await syncSubscriptionFromStripe(orgId);
+                    if (synced) {
+                        subscription = await storage.getSubscription(orgId);
+                        subActive = subscription && ["active", "trialing"].includes(subscription.status);
+                    }
+                } catch (e) {
+                    // Stripe sync is best-effort — don't fail the status check
+                    console.warn("[billing/status] Stripe sync fallback failed:", e);
+                }
+            }
 
             const isActive = !!(trialActive || subActive);
 
@@ -250,4 +265,69 @@ export function registerBillingRoutes(app: Express) {
             res.status(500).json({ message: "Failed to get billing status" });
         }
     });
+
+    // ── Manual sync: pull subscription from Stripe into local DB ──
+    app.post("/api/billing/sync", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+        try {
+            const orgId = req.user!.organizationId;
+            if (!orgId) return res.status(400).json({ message: "No organisation" });
+
+            const synced = await syncSubscriptionFromStripe(orgId);
+            res.json({ synced });
+        } catch (error) {
+            console.error("Billing sync error:", error);
+            res.status(500).json({ message: "Failed to sync billing" });
+        }
+    });
+}
+
+/**
+ * Pull the latest subscription for an org directly from Stripe and upsert into DB.
+ * Returns true if an active subscription was found and synced.
+ */
+async function syncSubscriptionFromStripe(orgId: number): Promise<boolean> {
+    const billingCustomer = await storage.getBillingCustomer(orgId);
+    if (!billingCustomer) return false;
+
+    let stripe;
+    try {
+        stripe = await getStripe();
+    } catch {
+        return false; // No Stripe key configured
+    }
+
+    // List customer's subscriptions from Stripe
+    const subs = await stripe.subscriptions.list({
+        customer: billingCustomer.stripeCustomerId,
+        status: "all",
+        limit: 5,
+    });
+
+    if (!subs.data.length) return false;
+
+    // Find the most relevant subscription (active/trialing first)
+    const activeSub = subs.data.find(s => ["active", "trialing"].includes(s.status)) || subs.data[0];
+
+    const existingSub = await storage.getSubscriptionByStripeId(activeSub.id);
+    const subData = {
+        stripeSubscriptionId: activeSub.id,
+        stripePriceId: (activeSub as any).items?.data?.[0]?.price?.id || "",
+        status: activeSub.status,
+        currentPeriodEnd: new Date((activeSub as any).current_period_end * 1000),
+        cancelAtPeriodEnd: activeSub.cancel_at_period_end,
+        trialEndsAt: (activeSub as any).trial_end ? new Date((activeSub as any).trial_end * 1000) : null,
+        activeEmployeeQuantity: (activeSub as any).items?.data?.[0]?.quantity || 0,
+    };
+
+    if (existingSub) {
+        await storage.updateSubscription(activeSub.id, subData);
+    } else {
+        await storage.createSubscription({
+            organisationId: orgId,
+            ...subData,
+        });
+    }
+
+    console.log(`[billing/sync] Synced subscription ${activeSub.id} (${activeSub.status}) for org ${orgId}`);
+    return ["active", "trialing"].includes(activeSub.status);
 }
