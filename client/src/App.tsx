@@ -2,6 +2,7 @@ import { Route, Switch } from "wouter";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
+import { useToast } from "@/hooks/use-toast";
 import LandingPage from "@/pages/landing-page";
 import LoginPage from "@/pages/login-page";
 import OrgLoginPage from "@/pages/org-login-page";
@@ -17,12 +18,46 @@ import AdminDashboard from "@/pages/admin-dashboard";
 import NotFound from "@/pages/not-found";
 import { SubscriptionGate } from "@/components/subscription-gate";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+
+/**
+ * Handle ?billing=success|cancelled after Stripe checkout redirect.
+ * Shows a toast and forces billing status re-check.
+ */
+function useBillingRedirect() {
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const billing = params.get("billing");
+
+    if (billing === "success") {
+      toast({
+        title: "🎉 Subscription activated!",
+        description: "Your payment was successful. Welcome to Clock-In Pro!",
+      });
+      // Force re-check billing status immediately
+      queryClient.invalidateQueries({ queryKey: ["/api/billing/status"] });
+      // Clean URL
+      window.history.replaceState({}, "", "/");
+    } else if (billing === "cancelled") {
+      toast({
+        title: "Payment cancelled",
+        description: "You can subscribe any time from your dashboard.",
+        variant: "destructive",
+      });
+      window.history.replaceState({}, "", "/");
+    }
+  }, [toast]);
+}
 
 function Router() {
   const { data: user, isLoading } = useQuery({
     queryKey: ["/api/user"],
     retry: false,
   });
+
+  useBillingRedirect();
 
   if (isLoading) {
     return (

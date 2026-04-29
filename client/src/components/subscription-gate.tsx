@@ -20,7 +20,12 @@ interface BillingStatus {
 export function SubscriptionGate({ children }: { children: ReactNode }) {
     const { data: status, isLoading } = useQuery<BillingStatus>({
         queryKey: ["/api/billing/status"],
-        refetchInterval: 60_000, // Re-check every minute
+        // Poll every 3s for the first 2 min (to catch webhook after checkout), then every 60s
+        refetchInterval: (query) => {
+            const data = query.state.data as BillingStatus | undefined;
+            if (data?.isActive) return 60_000; // already active — slow poll
+            return 3_000; // not active — poll fast to catch webhook activation
+        },
     });
 
     const checkoutMutation = useMutation({
