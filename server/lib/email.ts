@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import { getEnvironment } from "./environment";
 
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
@@ -13,7 +14,9 @@ async function send(to: string, subject: string, html: string) {
     return { ok: false, skipped: true };
   }
   try {
-    const result = await resend.emails.send({ from: FROM, to, subject, html });
+    const env = getEnvironment();
+    const finalSubject = env === "production" ? subject : `[${env.toUpperCase()}] ${subject}`;
+    const result = await resend.emails.send({ from: FROM, to, subject: finalSubject, html });
     if (result.error) {
       console.error("[email] send failed:", result.error);
       return { ok: false, error: result.error };

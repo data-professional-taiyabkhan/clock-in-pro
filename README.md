@@ -163,6 +163,30 @@ No AWS services are used.
 
 ---
 
+## Environments
+
+| Environment | Branch | URL | Database | Stripe | Emails |
+|---|---|---|---|---|---|
+| **Production** | `main` | `clockinpro.autostrata.ai` | Neon `main` branch | Live mode | Real — no prefix |
+| **Staging** | `staging` | Railway staging URL | Neon `staging` branch | Test mode | Prefixed `[STAGING]` |
+| **Local** | any | `http://localhost:5000` | Local PG or Neon staging | Test mode | Prefixed `[DEVELOPMENT]` |
+
+### Environment variables
+
+- `APP_ENV` — server-side environment label (`development`, `staging`, `production`). Falls back to `NODE_ENV` if unset.
+- `VITE_APP_ENV` — client-side environment label. Controls the staging banner visibility.
+
+### Promotion workflow
+
+1. Develop on a feature branch off `staging`.
+2. Merge to `staging` → Railway auto-deploys to the staging URL.
+3. Test on staging (yellow "STAGING" banner is visible).
+4. When verified, merge `staging` → `main` → Railway auto-deploys to production.
+
+See [`STAGING_SETUP.md`](STAGING_SETUP.md) for full staging environment setup instructions.
+
+---
+
 ## Project Structure
 
 ```

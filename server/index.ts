@@ -11,6 +11,7 @@ import { registerPasswordRoutes } from "./routes/password.routes";
 import { requireActiveSubscription } from "./middleware/entitlement";
 import { startTrialExpiryReminderJob } from "./jobs/trial-expiry-reminder";
 import { setupVite, serveStatic, log } from "./vite";
+import { getEnvironment } from "./lib/environment";
 
 const app = express();
 
@@ -96,6 +97,7 @@ app.use((req, res, next) => {
   const port = parseInt(process.env.PORT || "5000");
   server.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
+    log(`Environment: ${getEnvironment()}`);
 
     // Start background jobs
     startTrialExpiryReminderJob();

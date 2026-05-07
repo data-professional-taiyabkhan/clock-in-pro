@@ -17,6 +17,7 @@ import EmployeeDashboard from "@/pages/employee-dashboard";
 import AdminDashboard from "@/pages/admin-dashboard";
 import NotFound from "@/pages/not-found";
 import { SubscriptionGate } from "@/components/subscription-gate";
+import { StagingBanner } from "@/components/staging-banner";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 
@@ -111,6 +112,7 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <StagingBanner />
       <Router />
       <Toaster />
     </QueryClientProvider>
