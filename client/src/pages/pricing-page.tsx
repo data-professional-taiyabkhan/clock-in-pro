@@ -86,6 +86,13 @@ export default function PricingPage() {
                                         <Check className="h-4 w-4 text-green-500 shrink-0" />{f}
                                     </li>
                                 ))}
+                                <li className="flex items-start gap-2 opacity-70">
+                                    <Check className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+                                    <div>
+                                        <span className="font-medium">Shift scheduling &amp; lateness tracking</span>
+                                        <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20">Coming soon</span>
+                                    </div>
+                                </li>
                             </ul>
                         </CardContent>
                     </Card>
@@ -115,6 +122,13 @@ export default function PricingPage() {
                                         <Check className="h-4 w-4 text-green-500 shrink-0" />{f}
                                     </li>
                                 ))}
+                                <li className="flex items-start gap-2 opacity-70">
+                                    <Check className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+                                    <div>
+                                        <span className="font-medium">Shift scheduling &amp; lateness tracking</span>
+                                        <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20">Coming soon</span>
+                                    </div>
+                                </li>
                             </ul>
                         </CardContent>
                     </Card>

@@ -61,14 +61,14 @@ function useFadeIn() {
 }
 
 export default function LandingPage() {
-    const stat1 = useCounter(99, 1500);
-    const stat2 = useCounter(50, 1800);
-    const stat3 = useCounter(5, 1200);
     const fade1 = useFadeIn();
     const fade2 = useFadeIn();
     const fade3 = useFadeIn();
     const fade4 = useFadeIn();
     const fade5 = useFadeIn();
+    const fadeT1 = useFadeIn();
+    const fadeT2 = useFadeIn();
+    const fadeT3 = useFadeIn();
 
     return (
         <div className="min-h-screen bg-[#0a0a0f] text-white overflow-hidden">
@@ -169,26 +169,26 @@ export default function LandingPage() {
                 </div>
             </section>
 
-            {/* ── Stats bar ── */}
+            {/* ── Trust signals ── */}
             <section className="py-16 px-6 border-y border-white/5 bg-white/[0.02]">
-                <div className="max-w-4xl mx-auto grid grid-cols-3 gap-8 text-center">
-                    <div ref={stat1.ref}>
-                        <div className="text-4xl md:text-5xl font-extrabold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
-                            {stat1.count}%
+                <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
+                    <div ref={fadeT1.ref} className={fadeT1.className}>
+                        <div className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
+                            14 days
                         </div>
-                        <p className="text-sm text-slate-500 mt-1">Uptime SLA</p>
+                        <p className="text-sm text-slate-500 mt-2">Free trial · no card needed</p>
                     </div>
-                    <div ref={stat2.ref}>
-                        <div className="text-4xl md:text-5xl font-extrabold bg-gradient-to-r from-violet-400 to-purple-400 bg-clip-text text-transparent">
-                            {stat2.count}+
+                    <div ref={fadeT2.ref} className={fadeT2.className}>
+                        <div className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-violet-400 to-purple-400 bg-clip-text text-transparent">
+                            £3.50
                         </div>
-                        <p className="text-sm text-slate-500 mt-1">Organisations</p>
+                        <p className="text-sm text-slate-500 mt-2">Per active employee per month</p>
                     </div>
-                    <div ref={stat3.ref}>
-                        <div className="text-4xl md:text-5xl font-extrabold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                            {stat3.count}★
+                    <div ref={fadeT3.ref} className={fadeT3.className}>
+                        <div className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+                            UK · GDPR
                         </div>
-                        <p className="text-sm text-slate-500 mt-1">Average rating</p>
+                        <p className="text-sm text-slate-500 mt-2">Article 9 biometric consent built in</p>
                     </div>
                 </div>
             </section>
