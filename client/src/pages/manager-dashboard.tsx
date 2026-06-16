@@ -195,23 +195,23 @@ export default function ManagerDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
+    <div className="min-h-screen bg-[#0a0a0f] text-white">
       <div className="container mx-auto p-6">
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Manager Dashboard</h1>
-            <p className="text-gray-600 dark:text-gray-300 mt-2">
+            <h1 className="text-3xl font-bold text-white">Manager Dashboard</h1>
+            <p className="text-slate-400 mt-2">
               Welcome back, {user?.firstName} {user?.lastName}
             </p>
             <div className="flex gap-4 mt-2">
-              <span className="text-sm bg-blue-100 text-blue-800 px-2 py-1 rounded">
+              <span className="text-sm bg-blue-500/10 text-blue-300 border border-blue-500/20 px-2 py-1 rounded-lg">
                 {employees.length} Total Employees
               </span>
-              <span className="text-sm bg-green-100 text-green-800 px-2 py-1 rounded">
+              <span className="text-sm bg-green-500/10 text-green-300 border border-green-500/20 px-2 py-1 rounded-lg">
                 {locations.length} Office Locations
               </span>
-              <span className="text-sm bg-purple-100 text-purple-800 px-2 py-1 rounded">
+              <span className="text-sm bg-violet-500/10 text-violet-300 border border-violet-500/20 px-2 py-1 rounded-lg">
                 {employeeLocations.length} Location Assignments
               </span>
             </div>
@@ -254,7 +254,7 @@ export default function ManagerDashboard() {
               <CardContent>
                 <div className="space-y-6">
                   {/* Assignment Form */}
-                  <div className="border rounded-lg p-6 bg-gray-50 dark:bg-gray-800">
+                  <div className="border border-white/10 rounded-xl p-6 bg-white/[0.03]">
                     <h3 className="font-medium mb-4 text-lg">Assign Employee to Location</h3>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div>

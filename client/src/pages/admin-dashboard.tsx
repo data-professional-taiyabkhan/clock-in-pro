@@ -310,23 +310,23 @@ export default function AdminDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
+    <div className="min-h-screen bg-[#0a0a0f] text-white">
       <div className="container mx-auto p-6">
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Admin Dashboard</h1>
-            <p className="text-gray-600 dark:text-gray-300 mt-2">
+            <h1 className="text-3xl font-bold text-white">Admin Dashboard</h1>
+            <p className="text-slate-400 mt-2">
               Welcome back, {user?.firstName} {user?.lastName}
             </p>
             <div className="flex gap-4 mt-2">
-              <span className="text-sm bg-blue-100 text-blue-800 px-2 py-1 rounded">
+              <span className="text-sm bg-blue-500/10 text-blue-300 border border-blue-500/20 px-2 py-1 rounded-lg">
                 {employees.length} Total Employees
               </span>
-              <span className="text-sm bg-green-100 text-green-800 px-2 py-1 rounded">
+              <span className="text-sm bg-green-500/10 text-green-300 border border-green-500/20 px-2 py-1 rounded-lg">
                 {locations.length} Office Locations
               </span>
-              <span className="text-sm bg-purple-100 text-purple-800 px-2 py-1 rounded">
+              <span className="text-sm bg-violet-500/10 text-violet-300 border border-violet-500/20 px-2 py-1 rounded-lg">
                 {employeeLocations.length} Location Assignments
               </span>
             </div>
@@ -359,42 +359,40 @@ export default function AdminDashboard() {
 
         {/* Employee Login URL */}
         {orgInfo?.slug && (
-          <Card className="mb-6 border-blue-200 bg-blue-50/50">
-            <CardContent className="pt-5 pb-4">
-              <div className="flex items-center justify-between flex-wrap gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 bg-blue-100 rounded-lg flex items-center justify-center shrink-0">
-                    <LinkIcon className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-sm text-blue-900">Employee Login Link</p>
-                    <p className="text-xs text-blue-700">Share this link with your employees so they can sign in</p>
-                  </div>
+          <div className="mb-6 bg-blue-500/10 border border-blue-500/20 rounded-xl p-5">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 bg-blue-500/20 rounded-lg flex items-center justify-center shrink-0 border border-blue-500/20">
+                  <LinkIcon className="h-5 w-5 text-blue-400" />
                 </div>
-                <div className="flex items-center gap-2">
-                  <code className="bg-white border border-blue-200 px-3 py-1.5 rounded-md text-sm font-mono text-blue-800">
-                    {window.location.origin}/org/{orgInfo.slug}
-                  </code>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="border-blue-300 text-blue-700 hover:bg-blue-100"
-                    onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}/org/${orgInfo.slug}`);
-                      setCopiedUrl(true);
-                      setTimeout(() => setCopiedUrl(false), 2000);
-                    }}
-                  >
-                    {copiedUrl ? (
-                      <><CheckCircle2 className="h-4 w-4 mr-1" /> Copied!</>
-                    ) : (
-                      <><Copy className="h-4 w-4 mr-1" /> Copy</>
-                    )}
-                  </Button>
+                <div>
+                  <p className="font-semibold text-sm text-white">Employee Login Link</p>
+                  <p className="text-xs text-slate-400">Share this link with your employees so they can sign in</p>
                 </div>
               </div>
-            </CardContent>
-          </Card>
+              <div className="flex items-center gap-2">
+                <code className="bg-white/5 border border-white/10 px-3 py-1.5 rounded-md text-sm font-mono text-blue-300">
+                  {window.location.origin}/org/{orgInfo.slug}
+                </code>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/org/${orgInfo.slug}`);
+                    setCopiedUrl(true);
+                    setTimeout(() => setCopiedUrl(false), 2000);
+                  }}
+                >
+                  {copiedUrl ? (
+                    <><CheckCircle2 className="h-4 w-4 mr-1" /> Copied!</>
+                  ) : (
+                    <><Copy className="h-4 w-4 mr-1" /> Copy</>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Tabs */}
@@ -425,7 +423,7 @@ export default function AdminDashboard() {
               <CardContent>
                 <div className="space-y-6">
                   {/* Assignment Form */}
-                  <div className="border rounded-lg p-6 bg-gray-50 dark:bg-gray-800">
+                  <div className="border border-white/10 rounded-xl p-6 bg-white/[0.03]">
                     <h3 className="font-medium mb-4 text-lg">Assign Employee to Location</h3>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div>
@@ -499,7 +497,7 @@ export default function AdminDashboard() {
                     {assignmentsLoading ? (
                       <div className="text-center py-8">Loading assignments...</div>
                     ) : employeeLocations.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500">
+                      <div className="text-center py-8 text-slate-500">
                         No location assignments yet. Assign employees to locations above.
                       </div>
                     ) : (
@@ -642,7 +640,7 @@ export default function AdminDashboard() {
                 {employeesLoading ? (
                   <div className="text-center py-8">Loading employees...</div>
                 ) : employees.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
+                  <div className="text-center py-8 text-slate-500">
                     No employees found. Invite employees using the Invitations tab.
                   </div>
                 ) : (
