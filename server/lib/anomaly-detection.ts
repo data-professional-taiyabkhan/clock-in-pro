@@ -370,7 +370,7 @@ export class AnomalyDetection {
       // Analyze behavior patterns
       for (const [userId, logs] of userBehaviors.entries()) {
         // Check for rapid successive attempts (possible automated attack)
-        const rapidAttempts = logs.filter((log, index) => {
+        const rapidAttempts = logs.filter((log: any, index: number) => {
           if (index === 0) return false;
           const timeDiff = new Date(log.attemptTime).getTime() - new Date(logs[index - 1].attemptTime).getTime();
           return timeDiff < 5000; // Less than 5 seconds between attempts
@@ -405,7 +405,7 @@ export class AnomalyDetection {
             organizationId,
             metadata: {
               consecutiveFailures,
-              recentLogs: logs.slice(-consecutiveFailures).map(l => ({
+              recentLogs: logs.slice(-consecutiveFailures).map((l: any) => ({
                 time: l.attemptTime,
                 type: l.verificationType,
                 success: l.success,

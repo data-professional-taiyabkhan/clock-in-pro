@@ -357,7 +357,7 @@ export default function ManagerDashboard() {
                               <TableCell className="font-medium">{assignment.location.name}</TableCell>
                               <TableCell>{assignment.location.postcode}</TableCell>
                               <TableCell>
-                                {new Date(assignment.createdAt).toLocaleDateString()}
+                                {assignment.createdAt ? new Date(assignment.createdAt).toLocaleDateString() : 'N/A'}
                               </TableCell>
                               <TableCell>
                                 <Button

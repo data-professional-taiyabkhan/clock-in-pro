@@ -203,7 +203,7 @@ export class RateLimiter {
     resetTime: number;
     blockUntil?: number;
   } | null {
-    const config = RATE_LIMITS[type];
+    const config = (RATE_LIMITS as Record<string, RateLimitConfig>)[type];
     const key = this.generateKey(type, userId, ip);
     const entry = this.getEntry(key);
     

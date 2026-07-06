@@ -298,9 +298,14 @@ export default function AdminDashboard() {
     };
 
     if (editingLocation) {
-      updateLocationMutation.mutate({ id: editingLocation.id, ...locationData });
+      updateLocationMutation.mutate({
+        id: editingLocation.id,
+        ...locationData,
+        latitude: locationData.latitude != null ? String(locationData.latitude) : undefined,
+        longitude: locationData.longitude != null ? String(locationData.longitude) : undefined,
+      } as any);
     } else {
-      createLocationMutation.mutate(locationData);
+      createLocationMutation.mutate({ ...locationData, organizationId: user!.organizationId! });
     }
   };
 

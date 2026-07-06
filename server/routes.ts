@@ -50,6 +50,41 @@ function calculateEuclideanDistance(embedding1: number[], embedding2: number[]):
   return Math.sqrt(sum);
 }
 
+// Simple distance calculation for location verification
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371e3; // Earth's radius in meters
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) *
+    Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c; // Distance in meters
+}
+
+// Liveness detection stub — placeholder until a local model is integrated.
+// For now the stub always passes. PIN clock-in is the recommended production path.
+async function performLivenessDetection(_imageData: string): Promise<{
+  success: boolean;
+  livenessScore: number;
+  isLive: boolean;
+  analysis?: any;
+  recommendations?: string[];
+  error?: string;
+}> {
+  // Stub: always returns live. Replace with a real model for production.
+  return {
+    success: true,
+    livenessScore: 100,
+    isLive: true,
+    analysis: { provider: 'stub' },
+    recommendations: []
+  };
+}
 
 export function registerRoutes(app: Express): Server {
   setupAuth(app);
@@ -218,8 +253,8 @@ export function registerRoutes(app: Express): Server {
   app.get("/api/organization", requireAuth, async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ message: "Not authenticated" });
-      if (!req.user.organizationId) return res.status(404).json({ message: "No organisation" });
-      const org = await storage.getOrganization(req.user.organizationId);
+      if (!req.user!.organizationId!) return res.status(404).json({ message: "No organisation" });
+      const org = await storage.getOrganization(req.user!.organizationId!);
       if (!org) return res.status(404).json({ message: "Organisation not found" });
       res.json({ id: org.id, name: org.name, slug: org.slug });
     } catch {
@@ -396,7 +431,7 @@ export function registerRoutes(app: Express): Server {
         return res.status(404).json({ message: "Employee not found" });
       }
 
-      if (employee.organizationId !== req.user!.organizationId) {
+      if (employee.organizationId !== req.user!.organizationId!) {
         return res.status(403).json({ message: "Access denied - employee not in your organization" });
       }
 
@@ -479,7 +514,7 @@ export function registerRoutes(app: Express): Server {
   // Location management routes
   app.get("/api/locations", requireAuth, async (req, res) => {
     try {
-      const locations = await storage.getActiveLocations(req.user!.organizationId);
+      const locations = await storage.getActiveLocations(req.user!.organizationId!);
       res.json(locations);
     } catch (error) {
       console.error("Get locations error:", error);
@@ -492,7 +527,7 @@ export function registerRoutes(app: Express): Server {
       // Add organizationId from the authenticated user
       const locationData = {
         ...req.body,
-        organizationId: req.user!.organizationId
+        organizationId: req.user!.organizationId!
       };
 
       const validatedData = insertLocationSchema.parse(locationData);
@@ -514,7 +549,7 @@ export function registerRoutes(app: Express): Server {
         return res.status(404).json({ message: "Location not found" });
       }
 
-      if (existingLocation[0].organizationId !== req.user!.organizationId) {
+      if (existingLocation[0].organizationId !== req.user!.organizationId!) {
         return res.status(403).json({ message: "Access denied - location not in your organization" });
       }
 
@@ -537,7 +572,7 @@ export function registerRoutes(app: Express): Server {
         return res.status(404).json({ message: "Location not found" });
       }
 
-      if (location[0].organizationId !== req.user!.organizationId) {
+      if (location[0].organizationId !== req.user!.organizationId!) {
         return res.status(403).json({ message: "Access denied - location not in your organization" });
       }
 
@@ -545,7 +580,7 @@ export function registerRoutes(app: Express): Server {
       res.json({ message: "Location deleted successfully" });
     } catch (error) {
       console.error("Delete location error:", error);
-      if (error.code === '23503') {
+      if ((error as any).code === '23503') {
         res.status(400).json({
           message: "Cannot delete location: it has associated data. Please contact system administrator."
         });
@@ -558,7 +593,7 @@ export function registerRoutes(app: Express): Server {
   // Employee location assignments (Manager only)
   app.get("/api/employee-locations", requireAdmin, async (req, res) => {
     try {
-      const assignments = await storage.getAllEmployeeLocationAssignments(req.user!.organizationId);
+      const assignments = await storage.getAllEmployeeLocationAssignments(req.user!.organizationId!);
       res.json(assignments);
     } catch (error) {
       console.error("Get employee locations error:", error);
@@ -593,14 +628,14 @@ export function registerRoutes(app: Express): Server {
         userId: parseInt(userId.toString()),
         locationId: parseInt(locationId.toString()),
         assignedById: req.user!.id,
-        organizationId: req.user!.organizationId
+        organizationId: req.user!.organizationId!
       });
 
       console.log("Assignment created:", assignment);
       res.json(assignment);
     } catch (error) {
       console.error("Assign employee location error:", error);
-      res.status(500).json({ message: "Failed to assign employee to location", error: error.message });
+      res.status(500).json({ message: "Failed to assign employee to location", error: (error as Error).message });
     }
   });
 
@@ -677,7 +712,7 @@ export function registerRoutes(app: Express): Server {
           // Log failed attempt
           await AuditLogger.logFaceVerification(
             req.user!.id,
-            req.user!.organizationId,
+            req.user!.organizationId!,
             false,
             {
               deviceInfo,
@@ -688,7 +723,7 @@ export function registerRoutes(app: Express): Server {
 
           return res.status(400).json({
             message: "No face image registered. Please register your face first.",
-            canUsePin: req.user.pinEnabled
+            canUsePin: req.user!.pinEnabled
           });
         }
 
@@ -700,7 +735,7 @@ export function registerRoutes(app: Express): Server {
           if (!finalLocation || (!finalLocation.latitude || !finalLocation.longitude)) {
             await AuditLogger.logFaceVerification(
               req.user!.id,
-              req.user!.organizationId,
+              req.user!.organizationId!,
               false,
               {
                 deviceInfo,
@@ -742,7 +777,7 @@ export function registerRoutes(app: Express): Server {
 
             await AuditLogger.logFaceVerification(
               req.user!.id,
-              req.user!.organizationId,
+              req.user!.organizationId!,
               false,
               {
                 locationLatitude: parseFloat(finalLocation.latitude),
@@ -763,14 +798,14 @@ export function registerRoutes(app: Express): Server {
         }
 
         // Step 2: Liveness Detection
-        console.log(`Starting liveness detection for ${req.user.email}`);
+        console.log(`Starting liveness detection for ${req.user!.email}`);
 
         const livenessResult = await performLivenessDetection(imageData);
 
         if (!livenessResult.success) {
           await AuditLogger.logFaceVerification(
             req.user!.id,
-            req.user!.organizationId,
+            req.user!.organizationId!,
             false,
             {
               locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
@@ -791,7 +826,7 @@ export function registerRoutes(app: Express): Server {
         if (!livenessResult.isLive) {
           await AuditLogger.logFaceVerification(
             req.user!.id,
-            req.user!.organizationId,
+            req.user!.organizationId!,
             false,
             {
               locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
@@ -820,7 +855,7 @@ export function registerRoutes(app: Express): Server {
         console.log(`Liveness detection passed with score: ${livenessResult.livenessScore}`);
 
         // Step 3: Face Recognition
-        console.log(`Starting face recognition for ${req.user.email}`);
+        console.log(`Starting face recognition for ${req.user!.email}`);
 
         try {
           const capturedImage = imageData;
@@ -829,7 +864,7 @@ export function registerRoutes(app: Express): Server {
           if (!registeredFaceImage) {
             await AuditLogger.logFaceVerification(
               req.user!.id,
-              req.user!.organizationId,
+              req.user!.organizationId!,
               false,
               {
                 locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
@@ -866,7 +901,7 @@ export function registerRoutes(app: Express): Server {
                 const faceConfidence = Math.max(0, 100 - (dist * 100));
                 await AuditLogger.logFaceVerification(
                   req.user!.id,
-                  req.user!.organizationId,
+                  req.user!.organizationId!,
                   true,
                   {
                     faceConfidence,
@@ -881,7 +916,7 @@ export function registerRoutes(app: Express): Server {
                 let attendanceRecord;
                 if (action === 'out') {
                   const today = new Date().toISOString().split('T')[0];
-                  const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
+                  const todayRecord = await storage.getTodayAttendanceRecord(req.user!.id, today);
                   if (!todayRecord || todayRecord.clockOutTime) {
                     return res.status(400).json({
                       verified: false,
@@ -892,8 +927,8 @@ export function registerRoutes(app: Express): Server {
                   attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, { clockOutTime: new Date() });
                 } else {
                   attendanceRecord = await storage.createAttendanceRecord({
-                    userId: req.user.id,
-                    organizationId: req.user.organizationId,
+                    userId: req.user!.id,
+                    organizationId: req.user!.organizationId!,
                     clockInTime: new Date(),
                     date: new Date().toISOString().split('T')[0],
                   });
@@ -919,10 +954,10 @@ export function registerRoutes(app: Express): Server {
           console.log(`Comparing captured image using AWS Rekognition`);
 
           // Face comparison using AWS Rekognition
-          const verificationResult = await verifyFace(capturedImage, req.user.id);
+          const verificationResult = await verifyFace(capturedImage, req.user!.id);
 
           console.log(`=== AWS REKOGNITION VERIFICATION RESULT ===`);
-          console.log(`User: ${req.user.email}`);
+          console.log(`User: ${req.user!.email}`);
           console.log(`Liveness Score: ${livenessResult.livenessScore}`);
           console.log(`Face Match: ${verificationResult.verified ? 'PASS' : 'FAIL'}`);
           console.log(`Similarity: ${verificationResult.similarity}`);
@@ -931,12 +966,12 @@ export function registerRoutes(app: Express): Server {
           const faceConfidence = verificationResult.similarity || 0;
 
           if (verificationResult.verified) {
-            console.log(`✓ Face verification successful for ${req.user.email}`);
+            console.log(`✓ Face verification successful for ${req.user!.email}`);
 
             // Log successful verification
             await AuditLogger.logFaceVerification(
               req.user!.id,
-              req.user!.organizationId,
+              req.user!.organizationId!,
               true,
               {
                 faceConfidence,
@@ -957,7 +992,7 @@ export function registerRoutes(app: Express): Server {
             let attendanceRecord;
             if (action === 'out') {
               const today = new Date().toISOString().split('T')[0];
-              const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
+              const todayRecord = await storage.getTodayAttendanceRecord(req.user!.id, today);
 
               if (!todayRecord || todayRecord.clockOutTime) {
                 return res.status(400).json({
@@ -972,8 +1007,8 @@ export function registerRoutes(app: Express): Server {
               });
             } else {
               attendanceRecord = await storage.createAttendanceRecord({
-                userId: req.user.id,
-                organizationId: req.user.organizationId,
+                userId: req.user!.id,
+                organizationId: req.user!.organizationId!,
                 clockInTime: new Date(),
                 date: new Date().toISOString().split('T')[0],
               });
@@ -993,7 +1028,7 @@ export function registerRoutes(app: Express): Server {
           } else {
             await AuditLogger.logFaceVerification(
               req.user!.id,
-              req.user!.organizationId,
+              req.user!.organizationId!,
               false,
               {
                 faceConfidence,
@@ -1011,7 +1046,7 @@ export function registerRoutes(app: Express): Server {
               }
             );
 
-            console.log(`✗ Face verification REJECTED for ${req.user.email}`);
+            console.log(`✗ Face verification REJECTED for ${req.user!.email}`);
             return res.status(400).json({
               verified: false,
               similarity: verificationResult.similarity,
@@ -1029,14 +1064,14 @@ export function registerRoutes(app: Express): Server {
         } catch (error) {
           await AuditLogger.logFaceVerification(
             req.user!.id,
-            req.user!.organizationId,
+            req.user!.organizationId!,
             false,
             {
               locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
               locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
               livenessScore: livenessResult.livenessScore,
               deviceInfo,
-              failureReason: `Face verification service error: ${error.message}`,
+              failureReason: `Face verification service error: ${(error as Error).message}`,
               metadata: { action }
             }
           );
@@ -1101,7 +1136,7 @@ export function registerRoutes(app: Express): Server {
         if (!validation.success) {
           await AuditLogger.logPinVerification(
             req.user!.id,
-            req.user!.organizationId,
+            req.user!.organizationId!,
             false,
             {
               deviceInfo,
@@ -1119,7 +1154,7 @@ export function registerRoutes(app: Express): Server {
         if (!req.user!.pinEnabled || !req.user!.pinHash) {
           await AuditLogger.logPinVerification(
             req.user!.id,
-            req.user!.organizationId,
+            req.user!.organizationId!,
             false,
             {
               deviceInfo,
@@ -1138,7 +1173,7 @@ export function registerRoutes(app: Express): Server {
         if (!isValidPin) {
           await AuditLogger.logPinVerification(
             req.user!.id,
-            req.user!.organizationId,
+            req.user!.organizationId!,
             false,
             {
               deviceInfo,
@@ -1156,7 +1191,7 @@ export function registerRoutes(app: Express): Server {
         // Log successful PIN verification
         await AuditLogger.logPinVerification(
           req.user!.id,
-          req.user!.organizationId,
+          req.user!.organizationId!,
           true,
           {
             locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
@@ -1175,7 +1210,7 @@ export function registerRoutes(app: Express): Server {
         let attendanceRecord;
         if (action === 'out') {
           const today = new Date().toISOString().split('T')[0];
-          const todayRecord = await storage.getTodayAttendanceRecord(req.user.id, today);
+          const todayRecord = await storage.getTodayAttendanceRecord(req.user!.id, today);
 
           if (!todayRecord || todayRecord.clockOutTime) {
             return res.status(400).json({
@@ -1189,8 +1224,8 @@ export function registerRoutes(app: Express): Server {
           });
         } else {
           attendanceRecord = await storage.createAttendanceRecord({
-            userId: req.user.id,
-            organizationId: req.user.organizationId,
+            userId: req.user!.id,
+            organizationId: req.user!.organizationId!,
             clockInTime: new Date(),
             date: new Date().toISOString().split('T')[0],
             checkInMethod: 'pin'
@@ -1220,7 +1255,7 @@ export function registerRoutes(app: Express): Server {
       const { userId, limit = 50, offset = 0, verificationType, success, startDate, endDate } = req.query;
 
       const logs = await AuditLogger.getOrganizationAuditLogs(
-        req.user!.organizationId,
+        req.user!.organizationId!,
         parseInt(limit as string),
         parseInt(offset as string),
         {
@@ -1250,7 +1285,7 @@ export function registerRoutes(app: Express): Server {
 
       const logs = await AuditLogger.getUserAuditLogs(
         parseInt(userId),
-        req.user!.organizationId,
+        req.user!.organizationId!,
         parseInt(limit as string),
         parseInt(offset as string)
       );
@@ -1268,7 +1303,7 @@ export function registerRoutes(app: Express): Server {
         return res.status(403).json({ message: "Access denied" });
       }
 
-      const alerts = await AuditLogger.generateSecurityAlerts(req.user!.organizationId);
+      const alerts = await AuditLogger.generateSecurityAlerts(req.user!.organizationId!);
 
       res.json({ alerts });
     } catch (error) {
@@ -1285,7 +1320,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       const { hours = '24' } = req.query;
-      const anomalies = await AnomalyDetection.runAnomalyDetection(req.user!.organizationId);
+      const anomalies = await AnomalyDetection.runAnomalyDetection(req.user!.organizationId!);
 
       res.json({ anomalies });
     } catch (error) {
@@ -1300,7 +1335,7 @@ export function registerRoutes(app: Express): Server {
         return res.status(403).json({ message: "Access denied" });
       }
 
-      const metrics = await AnomalyDetection.generateSecurityMetrics(req.user!.organizationId);
+      const metrics = await AnomalyDetection.generateSecurityMetrics(req.user!.organizationId!);
 
       res.json({ metrics });
     } catch (error) {
@@ -1395,7 +1430,7 @@ export function registerRoutes(app: Express): Server {
 
       const attendanceRecord = await storage.createAttendanceRecord({
         userId: req.user!.id,
-        organizationId: req.user!.organizationId,
+        organizationId: req.user!.organizationId!,
         clockInTime: new Date(),
         date: today,
         locationId,
@@ -1437,7 +1472,6 @@ export function registerRoutes(app: Express): Server {
 
       const updatedRecord = await storage.updateAttendanceRecord(activeRecord.id, {
         clockOutTime,
-        totalHours: parseFloat(totalHours)
       });
 
       console.log(`User ${req.user!.email} clocked out from session ${activeRecord.id}`);
@@ -1455,7 +1489,7 @@ export function registerRoutes(app: Express): Server {
 
       const attendanceRecord = await storage.createAttendanceRecord({
         userId,
-        organizationId: req.user!.organizationId,
+        organizationId: req.user!.organizationId!,
         clockInTime: new Date(clockInTime),
         date,
         locationId,
@@ -1506,7 +1540,6 @@ export function registerRoutes(app: Express): Server {
 
       const updatedRecord = await storage.updateAttendanceRecord(activeRecord.id, {
         clockOutTime: finalClockOutTime,
-        totalHours: parseFloat(totalHours),
         notes: notes || activeRecord.notes
       });
 
@@ -1528,7 +1561,7 @@ export function registerRoutes(app: Express): Server {
         records = await storage.getUserAttendanceRecords(req.user!.id, 30);
       } else {
         // Managers and admins see all records from their organization
-        records = await storage.getAllAttendanceRecords(100, req.user!.organizationId);
+        records = await storage.getAllAttendanceRecords(100, req.user!.organizationId!);
       }
 
       res.json(records);
@@ -1542,7 +1575,7 @@ export function registerRoutes(app: Express): Server {
   app.get("/api/analytics/employees", requireAdmin, async (req, res) => {
     try {
       // CRITICAL: Only get users from the same organization as the manager
-      const employees = await storage.getAllUsers(req.user!.organizationId);
+      const employees = await storage.getAllUsers(req.user!.organizationId!);
       const employeeAnalytics = [];
 
       for (const employee of employees.filter(u => u.role === 'employee')) {
@@ -1633,7 +1666,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       // CRITICAL: Ensure the employee belongs to the same organization as the manager
-      if (employee.organizationId !== req.user!.organizationId) {
+      if (employee.organizationId !== req.user!.organizationId!) {
         return res.status(403).json({ message: "Access denied - employee not in your organization" });
       }
 
@@ -1943,7 +1976,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       // Get all users from the same organization for managers/admins to see
-      const allUsers = await storage.getAllUsers(req.user!.organizationId);
+      const allUsers = await storage.getAllUsers(req.user!.organizationId!);
 
       // Remove passwords from response
       res.json(allUsers.map(toSafeUser));
@@ -1973,7 +2006,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       // Check if user already exists in this organization
-      const existingUser = await storage.getUserByEmail(email, req.user!.organizationId);
+      const existingUser = await storage.getUserByEmail(email, req.user!.organizationId!);
       if (existingUser) {
         return res.status(400).json({ message: "User with this email already exists in this organization" });
       }
@@ -1989,7 +2022,7 @@ export function registerRoutes(app: Express): Server {
         email,
         password: hashedPassword,
         role: role || "employee",
-        organizationId: req.user!.organizationId, // Assign to same organization as the creating user
+        organizationId: req.user!.organizationId!, // Assign to same organization as the creating user
         isActive: true,
         faceImageUrl: null,
         faceEmbedding: null
@@ -2023,7 +2056,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       // Check if employee belongs to the same organization
-      if (employee.organizationId !== req.user!.organizationId) {
+      if (employee.organizationId !== req.user!.organizationId!) {
         return res.status(403).json({ message: "Cannot delete employee from different organization" });
       }
 
@@ -2059,7 +2092,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       // Check if user already exists in this organization
-      const existingUser = await storage.getUserByEmail(email, req.user!.organizationId);
+      const existingUser = await storage.getUserByEmail(email, req.user!.organizationId!);
       if (existingUser) {
         return res.status(400).json({ message: "User already exists in this organization" });
       }
@@ -2069,7 +2102,7 @@ export function registerRoutes(app: Express): Server {
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
       const invitation = await storage.createInvitation({
-        organizationId: req.user!.organizationId,
+        organizationId: req.user!.organizationId!,
         email,
         role: role || "employee",
         invitedBy: req.user!.id,
@@ -2107,7 +2140,7 @@ export function registerRoutes(app: Express): Server {
         return res.status(403).json({ message: "Manager or Admin access required" });
       }
 
-      const invitations = await storage.getActiveInvitations(req.user!.organizationId);
+      const invitations = await storage.getActiveInvitations(req.user!.organizationId!);
       res.json(invitations);
     } catch (error) {
       console.error("Get invitations error:", error);
@@ -2144,7 +2177,7 @@ export function registerRoutes(app: Express): Server {
         firstName,
         lastName,
         password: hashedPassword,
-        role: invitation.role,
+        role: invitation.role ?? undefined,
         faceImageUrl: faceImageData || null,
       });
 

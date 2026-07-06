@@ -73,7 +73,7 @@ export class FaceRecognitionService {
       console.error('Face detection error:', error);
       return {
         success: false,
-        error: `Face detection failed: ${error.message}`
+        error: `Face detection failed: ${(error as Error).message}`
       };
     }
   }
@@ -99,7 +99,7 @@ export class FaceRecognitionService {
           } catch (error) {
             resolve({
               success: false,
-              error: error.message
+              error: (error as Error).message
             });
           }
         };
@@ -114,7 +114,7 @@ export class FaceRecognitionService {
     } catch (error) {
       return {
         success: false,
-        error: error.message
+        error: (error as Error).message
       };
     }
   }

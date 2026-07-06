@@ -8,9 +8,19 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { insertUserSchema, type InsertUser } from "@shared/schema";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { z } from "zod";
+
+const registrationFormSchema = z.object({
+  firstName: z.string().min(1, "First name is required"),
+  lastName: z.string().min(1, "Last name is required"),
+  email: z.string().email("Invalid email address"),
+  organization: z.string().min(1, "Organization name is required"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+});
+
+type RegistrationFormData = z.infer<typeof registrationFormSchema>;
+
 import { Clock, Users, Shield, TrendingUp } from "lucide-react";
 import { CameraFaceCapture } from "@/components/camera-face-capture";
 import { useMutation } from "@tanstack/react-query";
@@ -29,7 +39,7 @@ export default function AuthPage() {
   const [, setLocation] = useLocation();
   const [activeTab, setActiveTab] = useState("login");
   const [showFaceCapture, setShowFaceCapture] = useState(false);
-  const [registrationData, setRegistrationData] = useState<InsertUser | null>(null);
+  const [registrationData, setRegistrationData] = useState<RegistrationFormData | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -46,8 +56,8 @@ export default function AuthPage() {
     },
   });
 
-  const registerForm = useForm<InsertUser>({
-    resolver: zodResolver(insertUserSchema),
+  const registerForm = useForm<RegistrationFormData>({
+    resolver: zodResolver(registrationFormSchema),
     defaultValues: {
       firstName: "",
       lastName: "",
@@ -92,10 +102,10 @@ export default function AuthPage() {
     loginMutation.mutate(data);
   };
 
-  const onRegister = (data: InsertUser) => {
+  const onRegister = (data: RegistrationFormData) => {
     setRegistrationData(data);
     // Don't use the global registerMutation, create a local one that shows face capture
-    const registerPromise = registerMutation.mutateAsync(data);
+    const registerPromise = registerMutation.mutateAsync(data as any);
     registerPromise.then(() => {
       setShowFaceCapture(true);
     }).catch((error) => {

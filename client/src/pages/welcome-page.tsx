@@ -41,7 +41,7 @@ export default function WelcomePage() {
 
   useEffect(() => {
     // Check if user needs face registration
-    if (!user?.faceRegistered) {
+    if (!(user as any)?.faceRegistered) {
       setShowFaceRegistration(true);
       return;
     }
@@ -55,7 +55,7 @@ export default function WelcomePage() {
     }, 3000);
 
     return () => clearTimeout(timer);
-  }, [user?.faceRegistered, clockInMutation, setLocation]);
+  }, [(user as any)?.faceRegistered, clockInMutation, setLocation]);
 
   const currentTime = new Date();
 
