@@ -314,13 +314,8 @@ export function registerRoutes(app: Express): Server {
           embedding
         );
 
-        if (trainingPayload) {
-          try {
-            await storage.updateUserFaceEmbeddingVector(req.user!.id, JSON.stringify(trainingPayload));
-          } catch (e) {
-            console.warn('Failed to store training payload vector', e);
-          }
-        }
+
+
       }
 
       if (!updatedUser) {
