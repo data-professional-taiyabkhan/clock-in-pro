@@ -121,6 +121,17 @@ npm run db:push      # Push Drizzle schema to the database
 npm run db:verify    # Verify database schema
 ```
 
+### Pre-push checklist
+
+Before pushing to `main`, run **both** commands — each must exit with **zero** errors:
+
+```bash
+npm run check   # Must report 0 errors
+npm run build   # Must succeed
+```
+
+`npm run check` runs `tsc --noEmit` and catches type errors that the Vite build ignores. If `check` passes but `build` fails (or vice versa), do not push.
+
 ---
 
 ## Multi-Tenancy
