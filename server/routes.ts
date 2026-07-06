@@ -815,6 +815,11 @@ async function generateProbeEmbedding(imageData: string): Promise<number[]> {
 export function registerRoutes(app: Express): Server {
   setupAuth(app);
 
+  // ── Health check (Railway / uptime monitors) ──────────────────────────────
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() });
+  });
+
   // Authentication routes
   app.post("/api/login", async (req, res) => {
     try {
