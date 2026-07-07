@@ -17,7 +17,7 @@ import { sendInvitationEmail } from "./lib/email";
 
 // Face recognition & image storage (local implementations)
 import { uploadFaceImage, getSignedFaceImageUrl, downloadFaceImageAsBase64 } from "./lib/face-image-storage";
-import { registerFace, verifyFace, analyzeFaceQuality, deleteUserFaces } from "./lib/face-recognition";
+import { verifyFace, analyzeFaceQuality, deleteUserFaces } from "./lib/face-recognition";
 
 const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
 
@@ -411,7 +411,7 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // Manager/Admin employee face image management
+  // Manager/Admin employee reference photo upload
   app.post("/api/employees/:id/face-image", requireAuth, async (req, res) => {
     try {
       // Check if user is manager or admin
@@ -444,71 +444,47 @@ export function registerRoutes(app: Express): Server {
         });
       }
 
-      // Store face image using AWS Rekognition and S3
-      try {
-        console.log(`Storing face image for employee ${employeeId} using AWS Rekognition...`);
+      // Analyze face quality
+      const qualityCheck = await analyzeFaceQuality(imageData);
 
-        // Step 1: Analyze face quality
-        const qualityCheck = await analyzeFaceQuality(imageData);
-
-        if (!qualityCheck.isGoodQuality) {
-          return res.status(400).json({
-            message: "Poor image quality",
-            issues: qualityCheck.issues,
-            recommendations: [
-              "Ensure good lighting",
-              "Make sure face is clearly visible",
-              "Avoid blurry images",
-              "Remove sunglasses"
-            ]
-          });
-        }
-
-        // Step 2: Upload to S3
-        const s3Result = await uploadFaceImage(employeeId, imageData);
-
-        if (!s3Result.success) {
-          throw new Error(s3Result.error || 'S3 upload failed');
-        }
-
-        // Step 3: Register in AWS Rekognition
-        const rekognitionResult = await registerFace(imageData, employeeId);
-
-        if (!rekognitionResult.success) {
-          console.error("Rekognition registration failed:", rekognitionResult.error);
-          // Continue anyway - S3 upload succeeded
-        }
-
-        // Step 4: Update database
-        await storage.updateUserFaceImage(employeeId, s3Result.imageUrl!);
-
-        // Get updated user
-        const updatedUser = await storage.getUser(employeeId);
-        if (!updatedUser) {
-          throw new Error('Failed to retrieve updated user');
-        }
-
-        const safeUser = toSafeUser(updatedUser);
-        res.json({
-          message: "Employee face registered successfully with AWS Rekognition",
-          user: safeUser,
-          verification_method: {
-            hasImage: true,
-            method: 'AWS Rekognition',
-            confidence: rekognitionResult.confidence || 0,
-            imageQuality: rekognitionResult.imageQuality
-          }
-        });
-
-      } catch (error) {
-        console.error("AWS face registration error:", error);
-        return res.status(500).json({
-          message: "Failed to register face. Please try again with a clearer photo."
+      if (!qualityCheck.isGoodQuality) {
+        return res.status(400).json({
+          message: "Poor image quality",
+          issues: qualityCheck.issues,
+          recommendations: [
+            "Ensure good lighting",
+            "Make sure face is clearly visible",
+            "Avoid blurry images",
+            "Remove sunglasses"
+          ]
         });
       }
+
+      // Store face image (reference photo only — not an embedding)
+      const s3Result = await uploadFaceImage(employeeId, imageData);
+
+      if (!s3Result.success) {
+        throw new Error(s3Result.error || 'Image storage failed');
+      }
+
+      // Update database with reference photo
+      await storage.updateUserFaceImage(employeeId, s3Result.imageUrl!);
+
+      // Get updated user
+      const updatedUser = await storage.getUser(employeeId);
+      if (!updatedUser) {
+        throw new Error('Failed to retrieve updated user');
+      }
+
+      const safeUser = toSafeUser(updatedUser);
+      res.json({
+        message: "Reference photo saved. Note: this does NOT register the employee for face clock-in — the employee must register their face from their own device (Welcome page → face registration).",
+        user: safeUser,
+      });
+
     } catch (error) {
-      console.error("Face image upload error:", error);
-      res.status(500).json({ message: "Failed to upload face image" });
+      console.error("Reference photo upload error:", error);
+      res.status(500).json({ message: "Failed to upload reference photo" });
     }
   });
 
@@ -951,17 +927,17 @@ export function registerRoutes(app: Express): Server {
           }
 
 
-          console.log(`Comparing captured image using AWS Rekognition`);
+          console.log(`Comparing captured image using face-api.js`);
 
-          // Face comparison using AWS Rekognition
+          // Face comparison using local face-api.js descriptors
           const verificationResult = await verifyFace(capturedImage, req.user!.id);
 
-          console.log(`=== AWS REKOGNITION VERIFICATION RESULT ===`);
+          console.log(`=== FACE VERIFICATION RESULT ===`);
           console.log(`User: ${req.user!.email}`);
           console.log(`Liveness Score: ${livenessResult.livenessScore}`);
           console.log(`Face Match: ${verificationResult.verified ? 'PASS' : 'FAIL'}`);
           console.log(`Similarity: ${verificationResult.similarity}`);
-          console.log(`===========================================`);
+          console.log(`================================`);
 
           const faceConfidence = verificationResult.similarity || 0;
 
@@ -982,7 +958,7 @@ export function registerRoutes(app: Express): Server {
                 metadata: {
                   action,
                   similarity: verificationResult.similarity,
-                  engine: 'AWS Rekognition',
+                  engine: 'face-api.js',
                   analysis: livenessResult.analysis
                 }
               }
@@ -1040,7 +1016,7 @@ export function registerRoutes(app: Express): Server {
                 metadata: {
                   action,
                   similarity: verificationResult.similarity,
-                  engine: 'AWS Rekognition',
+                  engine: 'face-api.js',
                   analysis: livenessResult.analysis
                 }
               }

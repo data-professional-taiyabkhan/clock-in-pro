@@ -119,7 +119,7 @@ export default function ManagerDashboard() {
       queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
       toast({
         title: "Success",
-        description: "Employee face image updated successfully",
+        description: "Reference photo uploaded. Face clock-in is set up by the employee on their own device.",
       });
     },
     onError: (error: Error) => {
@@ -489,7 +489,7 @@ export default function ManagerDashboard() {
                     <div className="mb-4 text-sm text-gray-600">
                       Total employees: {employees.length} | 
                       Active: {employees.filter((emp: User) => emp.isActive).length} | 
-                      With face registration: {employees.filter((emp: User) => emp.faceImageUrl).length}
+                      With reference photo: {employees.filter((emp: User) => emp.faceImageUrl).length}
                     </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -522,7 +522,7 @@ export default function ManagerDashboard() {
                                   employee.faceImageUrl ? 'bg-green-500' : 'bg-yellow-500'
                                 }`} />
                                 <span className="text-xs">
-                                  {employee.faceImageUrl ? 'Face registered' : 'No face image'}
+                                  {employee.faceImageUrl ? 'Has photo' : 'No photo'}
                                 </span>
                               </div>
                               <div className="flex items-center gap-2">
@@ -586,7 +586,7 @@ export default function ManagerDashboard() {
                                   disabled={updateFaceMutation.isPending}
                                 >
                                   <Upload className="w-3 h-3 mr-1" />
-                                  {employee.faceImageUrl ? 'Update' : 'Add'}
+                                  {employee.faceImageUrl ? 'Update photo' : 'Upload photo'}
                                 </Button>
                               </div>
                             </div>

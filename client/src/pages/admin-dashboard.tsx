@@ -122,7 +122,7 @@ export default function AdminDashboard() {
       queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
       toast({
         title: "Success",
-        description: "Employee face image updated successfully",
+        description: "Reference photo uploaded. Face clock-in is set up by the employee on their own device.",
       });
     },
     onError: (error: Error) => {
@@ -704,7 +704,7 @@ export default function AdminDashboard() {
                                   disabled={updateFaceMutation.isPending}
                                 >
                                   <Upload className="h-4 w-4" />
-                                  {updateFaceMutation.isPending ? "Updating..." : "Update Face"}
+                                  {updateFaceMutation.isPending ? "Uploading..." : "Upload photo"}
                                 </Button>
                                 {employee.role !== 'admin' && (
                                   <Button
