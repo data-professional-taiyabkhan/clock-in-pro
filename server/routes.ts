@@ -29,11 +29,11 @@ function toSafeUser(user: User) {
 
   return {
     ...rest,
-    faceRegistered: Boolean(user.faceImageUrl) || hasEmbedding,
+    faceRegistered: hasEmbedding,
   };
 }
 
-// NOTE: Python helpers removed - using AWS Rekognition for face recognition
+// NOTE: Python helpers removed — face recognition uses face-api.js descriptors
 
 // Calculate Euclidean distance between two face embedding vectors
 function calculateEuclideanDistance(embedding1: number[], embedding2: number[]): number {
