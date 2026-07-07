@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { User, Camera, KeyRound } from "lucide-react";
@@ -31,6 +32,7 @@ export function FaceAuthModal({
   const [showPinDialog, setShowPinDialog] = useState(false);
   const [canUsePin, setCanUsePin] = useState(userPinEnabled);
   const { toast } = useToast();
+  const [, setLocation_] = useLocation();
 
   const verifyFaceMutation = useMutation({
     mutationFn: async (faceData: string) => {
@@ -52,6 +54,19 @@ export function FaceAuthModal({
       onSuccess();
     },
     onError: (error: any) => {
+      // Handle expired session (401) — do NOT show "face verification failed"
+      const statusCode = error?.status || error?.response?.status;
+      if (statusCode === 401 || error?.message?.includes("Authentication required")) {
+        toast({
+          title: "Session Expired",
+          description: "Your session has expired — please sign in again.",
+          variant: "destructive",
+        });
+        onClose();
+        setLocation_("/login");
+        return;
+      }
+
       let errorMessage = error.message;
       const response = error.response?.data || error.data;
       

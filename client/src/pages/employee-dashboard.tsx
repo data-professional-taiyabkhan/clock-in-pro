@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +26,7 @@ export default function EmployeeDashboard() {
   const [capturedImage, setCapturedImage] = useState<string>("");
   const [userLocation, setUserLocation] = useState<UserLocation>({});
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
+  const [, setLocation_] = useLocation();
 
   console.log('Component render - isCapturing:', isCapturing, 'capturedImage:', !!capturedImage);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -137,7 +139,18 @@ export default function EmployeeDashboard() {
       }
       setCapturedImage("");
     },
-    onError: (error: Error) => {
+    onError: (error: any) => {
+      // Handle expired session (401) — do NOT show "face verification failed"
+      const statusCode = error?.status || error?.response?.status;
+      if (statusCode === 401 || error?.message?.includes("Authentication required")) {
+        toast({
+          title: "Session Expired",
+          description: "Your session has expired — please sign in again.",
+          variant: "destructive",
+        });
+        setLocation_("/login");
+        return;
+      }
       toast({
         title: "Verification Failed",
         description: error.message,
