@@ -97,7 +97,8 @@ export function registerRoutes(app: Express): Server {
   // Authentication routes
   app.post("/api/login", async (req, res) => {
     try {
-      console.log("Login request received:", req.body);
+      // SECURITY: never log req.body here — it contains plaintext credentials.
+      console.log("Login attempt:", { email: req.body?.email, hasOrg: !!req.body?.organizationId });
 
       const { email, password, organizationId } = req.body;
       console.log("Parsed credentials:", { email, password: password ? "***" : "missing", organizationId });
@@ -120,7 +121,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       const isPasswordValid = await comparePasswords(password, user.password);
-      console.log("Password validation result:", isPasswordValid);
+
 
       if (!isPasswordValid) {
         return res.status(401).json({ message: "Invalid email or password" });
@@ -603,8 +604,7 @@ export function registerRoutes(app: Express): Server {
 
   app.post("/api/employee-locations", requireAdmin, async (req, res) => {
     try {
-      console.log("Raw request body:", req.body);
-      console.log("Body type:", typeof req.body);
+      // SECURITY: do not log req.body — may contain sensitive assignment data.
 
       // Ensure we have valid data
       let userId, locationId;
