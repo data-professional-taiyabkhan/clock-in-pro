@@ -8,6 +8,30 @@ import { apiRequest } from "@/lib/queryClient";
 import { useLocation, Link } from "wouter";
 import { Clock, ShieldCheck, ArrowRight, CheckCircle } from "lucide-react";
 
+const Wrapper = ({ children }: { children: React.ReactNode }) => (
+  <div className="min-h-screen flex items-center justify-center bg-[#0a0a0f] px-4 relative overflow-hidden">
+    <div className="absolute inset-0 pointer-events-none">
+      <div className="absolute top-1/4 left-1/3 w-80 h-80 bg-blue-600/15 rounded-full blur-[100px]" />
+      <div className="absolute bottom-1/3 right-1/3 w-72 h-72 bg-violet-600/10 rounded-full blur-[80px]" />
+    </div>
+    <div className="w-full max-w-md relative z-10 animate-[fadeInUp_0.6s_ease-out]">
+      <div className="text-center mb-8">
+        <Link href="/">
+          <div className="inline-flex items-center gap-2.5 mb-6 cursor-pointer group">
+            <div className="h-11 w-11 bg-gradient-to-br from-blue-500 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform">
+              <Clock className="h-6 w-6 text-white" />
+            </div>
+            <span className="text-xl font-bold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
+              Clock-In Pro
+            </span>
+          </div>
+        </Link>
+      </div>
+      {children}
+    </div>
+  </div>
+);
+
 export default function ResetPasswordPage() {
   const [, setLocation] = useLocation();
   const [password, setPassword] = useState("");
@@ -42,29 +66,6 @@ export default function ResetPasswordPage() {
     resetMutation.mutate({ token, newPassword: password });
   };
 
-  const Wrapper = ({ children }: { children: React.ReactNode }) => (
-    <div className="min-h-screen flex items-center justify-center bg-[#0a0a0f] px-4 relative overflow-hidden">
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/4 left-1/3 w-80 h-80 bg-blue-600/15 rounded-full blur-[100px]" />
-        <div className="absolute bottom-1/3 right-1/3 w-72 h-72 bg-violet-600/10 rounded-full blur-[80px]" />
-      </div>
-      <div className="w-full max-w-md relative z-10 animate-[fadeInUp_0.6s_ease-out]">
-        <div className="text-center mb-8">
-          <Link href="/">
-            <div className="inline-flex items-center gap-2.5 mb-6 cursor-pointer group">
-              <div className="h-11 w-11 bg-gradient-to-br from-blue-500 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform">
-                <Clock className="h-6 w-6 text-white" />
-              </div>
-              <span className="text-xl font-bold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
-                Clock-In Pro
-              </span>
-            </div>
-          </Link>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
 
   if (!token) {
     return (

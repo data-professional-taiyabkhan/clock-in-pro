@@ -8,6 +8,18 @@ import { Clock, Building2, Loader2, AlertTriangle, ArrowRight } from "lucide-rea
 import { apiRequest } from "@/lib/queryClient";
 import { toast } from "@/hooks/use-toast";
 
+const DarkBg = ({ children }: { children: React.ReactNode }) => (
+    <div className="min-h-screen flex items-center justify-center bg-[#0a0a0f] px-4 relative overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none">
+            <div className="absolute top-1/4 left-1/3 w-80 h-80 bg-blue-600/15 rounded-full blur-[100px]" />
+            <div className="absolute bottom-1/3 right-1/3 w-72 h-72 bg-violet-600/10 rounded-full blur-[80px]" />
+        </div>
+        <div className="w-full max-w-md relative z-10 animate-[fadeInUp_0.6s_ease-out]">
+            {children}
+        </div>
+    </div>
+);
+
 export default function OrgLoginPage() {
     const params = useParams<{ slug: string }>();
     const slug = params.slug || "";
@@ -49,17 +61,6 @@ export default function OrgLoginPage() {
         loginMutation.mutate({ email, password, organizationId: org.id });
     };
 
-    const DarkBg = ({ children }: { children: React.ReactNode }) => (
-        <div className="min-h-screen flex items-center justify-center bg-[#0a0a0f] px-4 relative overflow-hidden">
-            <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute top-1/4 left-1/3 w-80 h-80 bg-blue-600/15 rounded-full blur-[100px]" />
-                <div className="absolute bottom-1/3 right-1/3 w-72 h-72 bg-violet-600/10 rounded-full blur-[80px]" />
-            </div>
-            <div className="w-full max-w-md relative z-10 animate-[fadeInUp_0.6s_ease-out]">
-                {children}
-            </div>
-        </div>
-    );
 
     if (orgLoading) {
         return (
@@ -145,7 +146,7 @@ export default function OrgLoginPage() {
                         {loginMutation.isPending ? (
                             <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Signing in...</>
                         ) : (
-                            <>"Sign in" <ArrowRight className="h-4 w-4 ml-2" /></>
+                            <>Sign in <ArrowRight className="h-4 w-4 ml-2" /></>
                         )}
                     </Button>
                 </form>
