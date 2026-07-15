@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { useLocation } from "wouter";
+import { faceRecognition } from "@/lib/face-recognition";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +28,8 @@ export default function EmployeeDashboard() {
   const [userLocation, setUserLocation] = useState<UserLocation>({});
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [, setLocation_] = useLocation();
+  const [faceError, setFaceError] = useState<string>("");
+  const [isExtractingDescriptor, setIsExtractingDescriptor] = useState(false);
 
   console.log('Component render - isCapturing:', isCapturing, 'capturedImage:', !!capturedImage);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -110,9 +113,10 @@ export default function EmployeeDashboard() {
 
   // Face verification mutation
   const verifyFaceMutation = useMutation({
-    mutationFn: async (data: { imageData: string; location?: UserLocation }) => {
+    mutationFn: async (data: { imageData: string; descriptor: number[]; location?: UserLocation }) => {
       const requestBody: any = {
         imageData: data.imageData,
+        descriptor: data.descriptor,
         action: todayAttendance?.record?.clockOutTime ? 'in' : (todayAttendance?.record?.clockInTime ? 'out' : 'in')
       };
 
@@ -303,22 +307,44 @@ export default function EmployeeDashboard() {
 
   const handleFaceCheckIn = async () => {
     if (!capturedImage) return;
+    setFaceError("");
 
     try {
-      // Always get fresh location for employees
+      // Step 1: Extract face descriptor from captured image
+      setIsExtractingDescriptor(true);
+      const result = await faceRecognition.generateDescriptorFromImageData(capturedImage);
+      setIsExtractingDescriptor(false);
+
+      if (!result.success || !result.descriptor) {
+        setFaceError("No face detected. Position your face in the frame and try again.");
+        return;
+      }
+
+      // Step 2: Get fresh location
       const location = await getUserLocation();
       console.log('Location obtained for verification:', location);
 
+      // Step 3: Send descriptor + imageData to server
       verifyFaceMutation.mutate({
         imageData: capturedImage,
+        descriptor: result.descriptor,
         location: location
       });
-    } catch (error) {
-      toast({
-        title: "Location Required",
-        description: "Please enable location services and try again. Location verification is required for check-in.",
-        variant: "destructive",
-      });
+    } catch (error: any) {
+      setIsExtractingDescriptor(false);
+      if (error?.code === 1 || error?.message?.includes('denied')) {
+        toast({
+          title: "Location Required",
+          description: "Please enable location services and try again. Location verification is required for check-in.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Verification Error",
+          description: error.message || "Failed to process face image.",
+          variant: "destructive",
+        });
+      }
     }
   };
 
@@ -492,19 +518,31 @@ export default function EmployeeDashboard() {
                             alt="Captured face"
                             className="w-full max-w-sm mx-auto rounded-lg"
                           />
+                          {faceError && (
+                            <div className="text-center text-sm text-red-600 font-medium">
+                              {faceError}
+                            </div>
+                          )}
+                          {isExtractingDescriptor && (
+                            <div className="text-center text-sm text-blue-600">
+                              Preparing face verification…
+                            </div>
+                          )}
                           <div className="flex gap-2">
                             <Button
                               onClick={handleFaceCheckIn}
-                              disabled={verifyFaceMutation.isPending || clockInMutation.isPending}
+                              disabled={verifyFaceMutation.isPending || clockInMutation.isPending || isExtractingDescriptor}
                               className="flex-1"
                             >
-                              {verifyFaceMutation.isPending || clockInMutation.isPending
+                              {isExtractingDescriptor
+                                ? "Preparing…"
+                                : verifyFaceMutation.isPending || clockInMutation.isPending
                                 ? "Processing..."
                                 : "Clock In"
                               }
                             </Button>
                             <Button
-                              onClick={() => setCapturedImage("")}
+                              onClick={() => { setCapturedImage(""); setFaceError(""); }}
                               variant="outline"
                             >
                               Retake

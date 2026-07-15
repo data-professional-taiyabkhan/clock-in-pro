@@ -8,6 +8,7 @@ import { PinAuthDialog } from "./pin-auth-dialog";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { faceRecognition } from "@/lib/face-recognition";
 
 interface FaceAuthModalProps {
   isOpen: boolean;
@@ -31,15 +32,17 @@ export function FaceAuthModal({
   const [showCamera, setShowCamera] = useState(false);
   const [showPinDialog, setShowPinDialog] = useState(false);
   const [canUsePin, setCanUsePin] = useState(userPinEnabled);
+  const [isExtractingDescriptor, setIsExtractingDescriptor] = useState(false);
   const { toast } = useToast();
   const [, setLocation_] = useLocation();
 
   const verifyFaceMutation = useMutation({
-    mutationFn: async (faceData: string) => {
+    mutationFn: async (data: { imageData: string; descriptor: number[] }) => {
       return await apiRequest("/api/verify-face", {
         method: "POST",
         body: JSON.stringify({ 
-          faceData,
+          imageData: data.imageData,
+          descriptor: data.descriptor,
           action,
           location,
           userLocation
@@ -105,8 +108,31 @@ export function FaceAuthModal({
     }
   }, [isOpen]);
 
-  const handleFaceCapture = (faceData: string) => {
-    verifyFaceMutation.mutate(faceData);
+  const handleFaceCapture = async (faceData: string) => {
+    // Compute real descriptor from captured image
+    setIsExtractingDescriptor(true);
+    try {
+      const result = await faceRecognition.generateDescriptorFromImageData(faceData);
+      setIsExtractingDescriptor(false);
+
+      if (!result.success || !result.descriptor) {
+        toast({
+          title: "No Face Detected",
+          description: "No face detected. Position your face in the frame and try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      verifyFaceMutation.mutate({ imageData: faceData, descriptor: result.descriptor });
+    } catch (err: any) {
+      setIsExtractingDescriptor(false);
+      toast({
+        title: "Verification Error",
+        description: err.message || "Failed to process face image.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleCancel = () => {
@@ -136,7 +162,12 @@ export function FaceAuthModal({
           </DialogDescription>
         </DialogHeader>
         <div className="px-4 sm:px-6 pb-4 sm:pb-6">
-          {showCamera ? (
+          {isExtractingDescriptor ? (
+            <div className="text-center p-6 space-y-3">
+              <div className="text-blue-600 font-medium">Preparing face verification…</div>
+              <p className="text-sm text-gray-500">Processing your face data, please wait.</p>
+            </div>
+          ) : showCamera ? (
             <div className="space-y-4">
               <SimpleFaceCapture
                 onCapture={handleFaceCapture}
