@@ -17,7 +17,7 @@ import { sendInvitationEmail } from "./lib/email";
 
 // Face recognition & image storage (local implementations)
 import { uploadFaceImage, getSignedFaceImageUrl, downloadFaceImageAsBase64 } from "./lib/face-image-storage";
-import { verifyFace, analyzeFaceQuality, deleteUserFaces } from "./lib/face-recognition";
+import { analyzeFaceQuality } from "./lib/face-recognition";
 
 const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
 
@@ -76,12 +76,13 @@ async function performLivenessDetection(_imageData: string): Promise<{
   recommendations?: string[];
   error?: string;
 }> {
-  // Stub: always returns live. Replace with a real model for production.
+  // Stub: no real anti-spoofing. Always returns pass-through.
+  console.log("Liveness check: stub (no real anti-spoofing) → pass-through");
   return {
     success: true,
     livenessScore: 100,
     isLive: true,
-    analysis: { provider: 'stub' },
+    analysis: { provider: 'stub', note: 'No real anti-spoofing — future project' },
     recommendations: []
   };
 }
@@ -684,21 +685,23 @@ export function registerRoutes(app: Express): Server {
           action
         });
 
-        if (!req.user?.faceImageUrl) {
-          // Log failed attempt
+        // Require a real face embedding (not just a reference photo)
+        const userEmbedding = req.user?.faceEmbedding;
+        const hasEmbedding = Array.isArray(userEmbedding) ? userEmbedding.length > 0 : Boolean(userEmbedding);
+        if (!hasEmbedding) {
           await AuditLogger.logFaceVerification(
             req.user!.id,
             req.user!.organizationId!,
             false,
             {
               deviceInfo,
-              failureReason: "No face image registered",
+              failureReason: "No face embedding registered",
               metadata: { action }
             }
           );
 
           return res.status(400).json({
-            message: "No face image registered. Please register your face first.",
+            message: "Face verification isn't set up yet. Go to Settings → Clock-In Settings → Set up face verification.",
             canUsePin: req.user!.pinEnabled
           });
         }
@@ -830,233 +833,118 @@ export function registerRoutes(app: Express): Server {
 
         console.log(`Liveness detection passed with score: ${livenessResult.livenessScore}`);
 
-        // Step 3: Face Recognition
-        console.log(`Starting face recognition for ${req.user!.email}`);
+        // Step 3: Face Recognition — descriptor match is the ONLY path
+        console.log(`Starting descriptor-based face match for ${req.user!.email}`);
 
-        try {
-          const capturedImage = imageData;
-          const registeredFaceImage = req.user.faceImageUrl;
-
-          if (!registeredFaceImage) {
-            await AuditLogger.logFaceVerification(
-              req.user!.id,
-              req.user!.organizationId!,
-              false,
-              {
-                locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
-                locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
-                livenessScore: livenessResult.livenessScore,
-                deviceInfo,
-                failureReason: "No face template found",
-                metadata: { action }
-              }
-            );
-
-            return res.status(400).json({
-              verified: false,
-              message: "No face template found for your account. Please contact your manager to register your face.",
-              canUsePin: req.user.pinEnabled
-            });
-          }
-
-          // If client provided descriptor and we have stored embedding, verify quickly via vector distance first
-          if (Array.isArray(descriptor) && Array.isArray(req.user.faceEmbedding)) {
-            try {
-              // Normalize embeddings then compute distance
-              const normalize = (v: number[]) => {
-                const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
-                return v.map(x => x / norm);
-              };
-              const reg = normalize(req.user.faceEmbedding as number[]);
-              const probe = normalize(descriptor as number[]);
-              const dist = calculateEuclideanDistance(reg, probe);
-              const threshold = 0.6;
-              if (dist <= threshold) {
-                // Fast-path success; continue to attendance creation
-                console.log(`Fast-path descriptor verification passed: distance ${dist}`);
-                const faceConfidence = Math.max(0, 100 - (dist * 100));
-                await AuditLogger.logFaceVerification(
-                  req.user!.id,
-                  req.user!.organizationId!,
-                  true,
-                  {
-                    faceConfidence,
-                    livenessScore: livenessResult.livenessScore,
-                    locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
-                    locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
-                    deviceInfo,
-                    metadata: { action, distance: dist, threshold }
-                  }
-                );
-                // Attendance
-                let attendanceRecord;
-                if (action === 'out') {
-                  const today = new Date().toISOString().split('T')[0];
-                  const todayRecord = await storage.getTodayAttendanceRecord(req.user!.id, today);
-                  if (!todayRecord || todayRecord.clockOutTime) {
-                    return res.status(400).json({
-                      verified: false,
-                      message: "No active clock-in found for today or already clocked out.",
-                      canUsePin: req.user.pinEnabled
-                    });
-                  }
-                  attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, { clockOutTime: new Date() });
-                } else {
-                  attendanceRecord = await storage.createAttendanceRecord({
-                    userId: req.user!.id,
-                    organizationId: req.user!.organizationId!,
-                    clockInTime: new Date(),
-                    date: new Date().toISOString().split('T')[0],
-                  });
-                }
-                return res.json({
-                  verified: true,
-                  distance: dist,
-                  threshold,
-                  faceConfidence,
-                  livenessScore: livenessResult.livenessScore,
-                  action: action || 'in',
-                  message: `Face verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`,
-                  attendance: attendanceRecord
-                });
-              }
-              console.log(`Fast-path descriptor verification failed: distance ${dist}, falling back to DeepFace`);
-            } catch (e) {
-              console.warn('Descriptor fast-path failed:', e);
-            }
-          }
-
-
-          console.log(`Comparing captured image using face-api.js`);
-
-          // Face comparison using local face-api.js descriptors
-          const verificationResult = await verifyFace(capturedImage, req.user!.id);
-
-          console.log(`=== FACE VERIFICATION RESULT ===`);
-          console.log(`User: ${req.user!.email}`);
-          console.log(`Liveness Score: ${livenessResult.livenessScore}`);
-          console.log(`Face Match: ${verificationResult.verified ? 'PASS' : 'FAIL'}`);
-          console.log(`Similarity: ${verificationResult.similarity}`);
-          console.log(`================================`);
-
-          const faceConfidence = verificationResult.similarity || 0;
-
-          if (verificationResult.verified) {
-            console.log(`✓ Face verification successful for ${req.user!.email}`);
-
-            // Log successful verification
-            await AuditLogger.logFaceVerification(
-              req.user!.id,
-              req.user!.organizationId!,
-              true,
-              {
-                faceConfidence,
-                livenessScore: livenessResult.livenessScore,
-                locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
-                locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
-                deviceInfo,
-                metadata: {
-                  action,
-                  similarity: verificationResult.similarity,
-                  engine: 'face-api.js',
-                  analysis: livenessResult.analysis
-                }
-              }
-            );
-
-            // Create attendance record based on action
-            let attendanceRecord;
-            if (action === 'out') {
-              const today = new Date().toISOString().split('T')[0];
-              const todayRecord = await storage.getTodayAttendanceRecord(req.user!.id, today);
-
-              if (!todayRecord || todayRecord.clockOutTime) {
-                return res.status(400).json({
-                  verified: false,
-                  message: "No active clock-in found for today or already clocked out.",
-                  canUsePin: req.user.pinEnabled
-                });
-              }
-
-              attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, {
-                clockOutTime: new Date(),
-              });
-            } else {
-              attendanceRecord = await storage.createAttendanceRecord({
-                userId: req.user!.id,
-                organizationId: req.user!.organizationId!,
-                clockInTime: new Date(),
-                date: new Date().toISOString().split('T')[0],
-              });
-            }
-
-            res.json({
-              verified: true,
-              similarity: verificationResult.similarity,
-              confidence: verificationResult.confidence,
-              faceConfidence,
-              livenessScore: livenessResult.livenessScore,
-              action: action || 'in',
-              message: `Face verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`,
-              attendance: attendanceRecord,
-              recommendations: verificationResult.recommendations
-            });
-          } else {
-            await AuditLogger.logFaceVerification(
-              req.user!.id,
-              req.user!.organizationId!,
-              false,
-              {
-                faceConfidence,
-                livenessScore: livenessResult.livenessScore,
-                locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
-                locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
-                deviceInfo,
-                failureReason: "Face match failed - possible different person",
-                metadata: {
-                  action,
-                  similarity: verificationResult.similarity,
-                  engine: 'face-api.js',
-                  analysis: livenessResult.analysis
-                }
-              }
-            );
-
-            console.log(`✗ Face verification REJECTED for ${req.user!.email}`);
-            return res.status(400).json({
-              verified: false,
-              similarity: verificationResult.similarity,
-              faceConfidence,
-              livenessScore: livenessResult.livenessScore,
-              message: `Face verification failed. ${verificationResult.recommendations?.[0] || 'Please try again with better lighting.'}`,
-              canUsePin: req.user.pinEnabled,
-              recommendations: verificationResult.recommendations,
-              technical_details: {
-                similarity: verificationResult.similarity?.toFixed(4),
-                livenessScore: livenessResult.livenessScore
-              }
-            });
-          }
-        } catch (error) {
+        // Require a descriptor from the client
+        if (!Array.isArray(descriptor)) {
           await AuditLogger.logFaceVerification(
             req.user!.id,
             req.user!.organizationId!,
             false,
             {
-              locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
-              locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
-              livenessScore: livenessResult.livenessScore,
               deviceInfo,
-              failureReason: `Face verification service error: ${(error as Error).message}`,
+              failureReason: "No descriptor provided by client",
               metadata: { action }
             }
           );
 
-          console.error("Face verification error:", error);
-          return res.status(500).json({
+          return res.status(400).json({
             verified: false,
-            message: "Face verification service unavailable",
+            message: "Face verification needs an on-device face scan. Please refresh the page and try again.",
             canUsePin: req.user.pinEnabled
+          });
+        }
+
+        // Normalize embeddings then compute Euclidean distance
+        const normalize = (v: number[]) => {
+          const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
+          return v.map(x => x / norm);
+        };
+        const reg = normalize(req.user.faceEmbedding as number[]);
+        const probe = normalize(descriptor as number[]);
+        const dist = calculateEuclideanDistance(reg, probe);
+        const threshold = 0.6;
+        const isMatch = dist <= threshold;
+
+        console.log(`Descriptor match: distance=${dist.toFixed(4)} threshold=${threshold} → ${isMatch ? 'PASS' : 'FAIL'}`);
+
+        const faceConfidence = Math.max(0, 100 - (dist * 100));
+
+        if (isMatch) {
+          // SUCCESS — create attendance record
+          await AuditLogger.logFaceVerification(
+            req.user!.id,
+            req.user!.organizationId!,
+            true,
+            {
+              faceConfidence,
+              livenessScore: livenessResult.livenessScore,
+              locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+              locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+              deviceInfo,
+              metadata: { action, distance: dist, threshold, engine: 'face-api.js' }
+            }
+          );
+
+          let attendanceRecord;
+          if (action === 'out') {
+            const today = new Date().toISOString().split('T')[0];
+            const todayRecord = await storage.getTodayAttendanceRecord(req.user!.id, today);
+            if (!todayRecord || todayRecord.clockOutTime) {
+              return res.status(400).json({
+                verified: false,
+                message: "No active clock-in found for today or already clocked out.",
+                canUsePin: req.user.pinEnabled
+              });
+            }
+            attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, { clockOutTime: new Date() });
+          } else {
+            attendanceRecord = await storage.createAttendanceRecord({
+              userId: req.user!.id,
+              organizationId: req.user!.organizationId!,
+              clockInTime: new Date(),
+              date: new Date().toISOString().split('T')[0],
+            });
+          }
+
+          return res.json({
+            verified: true,
+            distance: dist,
+            threshold,
+            faceConfidence,
+            livenessScore: livenessResult.livenessScore,
+            action: action || 'in',
+            message: `Face verified successfully! You have been clocked ${action === 'out' ? 'out' : 'in'}.`,
+            attendance: attendanceRecord
+          });
+        } else {
+          // FAIL — face didn't match
+          await AuditLogger.logFaceVerification(
+            req.user!.id,
+            req.user!.organizationId!,
+            false,
+            {
+              faceConfidence,
+              livenessScore: livenessResult.livenessScore,
+              locationLatitude: finalLocation ? parseFloat(finalLocation.latitude) : undefined,
+              locationLongitude: finalLocation ? parseFloat(finalLocation.longitude) : undefined,
+              deviceInfo,
+              failureReason: `Descriptor distance ${dist.toFixed(4)} exceeds threshold ${threshold}`,
+              metadata: { action, distance: dist, threshold, engine: 'face-api.js' }
+            }
+          );
+
+          console.log(`✗ Face verification REJECTED for ${req.user!.email} (distance=${dist.toFixed(4)})`);
+          return res.status(400).json({
+            verified: false,
+            message: "Face didn't match. Try better lighting, or use your PIN.",
+            canUsePin: req.user.pinEnabled,
+            technical_details: {
+              distance: dist.toFixed(4),
+              threshold,
+              livenessScore: livenessResult.livenessScore
+            }
           });
         }
       } catch (error) {
