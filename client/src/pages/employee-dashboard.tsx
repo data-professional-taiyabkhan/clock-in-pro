@@ -462,7 +462,7 @@ export default function EmployeeDashboard() {
                 </div>
 
                 <div className="mt-4 space-y-2">
-                  {user.faceImageUrl ? (
+                  {user.faceRegistered ? (
                     <div className="space-y-2">
                       {!isCapturing && !capturedImage && (
                         <div className="space-y-2">
@@ -551,10 +551,22 @@ export default function EmployeeDashboard() {
                         </div>
                       )}
                     </div>
-                  ) : null}
+                  ) : (
+                    <Alert>
+                      <Camera className="h-4 w-4" />
+                      <AlertDescription>
+                        <div className="space-y-2">
+                          <p>Face verification isn't set up. Go to the <strong>Settings</strong> tab → <strong>Clock-In Settings</strong> → <strong>Set up face verification</strong> to register your face.</p>
+                          {user.pinEnabled && (
+                            <p className="text-sm text-muted-foreground">You can still clock in using your PIN.</p>
+                          )}
+                        </div>
+                      </AlertDescription>
+                    </Alert>
+                  )}
 
                   {/* Show clock-out button only if currently clocked in */}
-                  {user.faceImageUrl && todayAttendance?.isClockedIn && (
+                  {user.faceRegistered && todayAttendance?.isClockedIn && (
                     <div className="space-y-2 mt-4">
                       <div className="text-center text-green-600 font-medium">
                         ✓ Currently clocked in

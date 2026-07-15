@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { AdvancedFaceTraining } from "@/components/advanced-face-training";
 import {
     KeyRound,
     ShieldCheck,
@@ -31,6 +32,7 @@ export default function EmployeeSettings() {
     const [confirmPin, setConfirmPin] = useState("");
     const [showPinForm, setShowPinForm] = useState(false);
     const [showConsentForm, setShowConsentForm] = useState(false);
+    const [showFaceRegistration, setShowFaceRegistration] = useState(false);
 
     // Fetch current user
     const { data: user } = useQuery<any>({
@@ -127,7 +129,26 @@ export default function EmployeeSettings() {
         setupPinMutation.mutate(pinValue);
     };
 
-    const hasFaceData = !!(user?.faceImageUrl || user?.faceDescriptor);
+    // ── Face Registration ──
+    const registerFaceMutation = useMutation({
+        mutationFn: async (trainingData: string) => {
+            return apiRequest("/api/register-face", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ faceData: trainingData }),
+            });
+        },
+        onSuccess: () => {
+            toast({ title: "Face registered", description: "Face verification is now set up. You can clock in with your face." });
+            setShowFaceRegistration(false);
+            queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+        },
+        onError: (err: Error) => {
+            toast({ title: "Registration failed", description: err.message, variant: "destructive" });
+        },
+    });
+
+    const hasFaceData = !!user?.faceRegistered;
     const hasPin = !!user?.pinEnabled;
     const hasConsent = consent?.hasActiveConsent;
 
@@ -150,11 +171,21 @@ export default function EmployeeSettings() {
                             <Camera className="h-5 w-5 text-blue-600" />
                             <span className="font-medium">Face Verification</span>
                         </div>
-                        {hasFaceData && hasConsent ? (
-                            <Badge className="bg-green-100 text-green-800">Active</Badge>
-                        ) : (
-                            <Badge variant="secondary">Inactive</Badge>
-                        )}
+                        <div className="flex items-center gap-2">
+                            {hasFaceData && hasConsent ? (
+                                <Badge className="bg-green-100 text-green-800">Active</Badge>
+                            ) : (
+                                <Badge variant="secondary">Inactive</Badge>
+                            )}
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setShowFaceRegistration(true)}
+                            >
+                                <Camera className="h-3 w-3 mr-1" />
+                                {hasFaceData ? "Re-register face" : "Set up face verification"}
+                            </Button>
+                        </div>
                     </div>
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -169,6 +200,26 @@ export default function EmployeeSettings() {
                     </div>
                 </CardContent>
             </Card>
+
+            {/* ── Face Registration (inline) ── */}
+            {showFaceRegistration && (
+                <Card>
+                    <CardHeader className="pb-3">
+                        <CardTitle className="text-lg flex items-center gap-2">
+                            <Camera className="h-5 w-5" /> {hasFaceData ? "Re-register Face" : "Set Up Face Verification"}
+                        </CardTitle>
+                        <CardDescription>
+                            Complete the face training flow below to {hasFaceData ? "update" : "enable"} face clock-in.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <AdvancedFaceTraining
+                            onComplete={(trainingData: string) => registerFaceMutation.mutate(trainingData)}
+                            onCancel={() => setShowFaceRegistration(false)}
+                        />
+                    </CardContent>
+                </Card>
+            )}
 
             {/* ── PIN Management ── */}
             <Card>
