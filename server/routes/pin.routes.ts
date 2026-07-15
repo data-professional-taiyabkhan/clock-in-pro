@@ -113,6 +113,12 @@ export function registerPinRoutes(app: Express) {
 
             res.json({ message: "Consent recorded", consent });
         } catch (error) {
+            if (error instanceof z.ZodError) {
+                return res.status(400).json({
+                    message: "Invalid consent data",
+                    errors: error.errors.map(e => e.message)
+                });
+            }
             console.error("Consent error:", error);
             res.status(500).json({ message: "Failed to record consent" });
         }

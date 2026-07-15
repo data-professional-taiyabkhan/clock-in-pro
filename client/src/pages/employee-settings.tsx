@@ -85,7 +85,7 @@ export default function EmployeeSettings() {
             return apiRequest("/api/user/consent", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ consentType: "biometric_face", policyVersion: "1.0" }),
+                body: JSON.stringify({ consentType: "face_biometric", consentGiven: true, policyVersion: "1.0" }),
             });
         },
         onSuccess: () => {
@@ -150,7 +150,9 @@ export default function EmployeeSettings() {
 
     const hasFaceData = !!user?.faceRegistered;
     const hasPin = !!user?.pinEnabled;
-    const hasConsent = consent?.hasActiveConsent;
+    const hasConsent = Array.isArray(consent?.consents) && consent.consents.some(
+        (c: any) => c.consentType === 'face_biometric' && c.consentGiven && !c.revokedAt
+    );
 
     return (
         <div className="space-y-6">
@@ -180,7 +182,14 @@ export default function EmployeeSettings() {
                             <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => setShowFaceRegistration(true)}
+                                onClick={() => {
+                                    if (!hasConsent) {
+                                        setShowConsentForm(true);
+                                        toast({ title: "Consent required", description: "Please grant biometric consent before setting up face verification.", variant: "destructive" });
+                                    } else {
+                                        setShowFaceRegistration(true);
+                                    }
+                                }}
                             >
                                 <Camera className="h-3 w-3 mr-1" />
                                 {hasFaceData ? "Re-register face" : "Set up face verification"}

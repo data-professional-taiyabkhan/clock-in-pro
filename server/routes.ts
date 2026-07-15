@@ -272,6 +272,20 @@ export function registerRoutes(app: Express): Server {
         return res.status(400).json({ message: "Face data is required" });
       }
 
+      // Defense in depth: require face_biometric consent before registration
+      const orgId = req.user!.organizationId;
+      if (orgId) {
+        const consents = await storage.getUserConsents(req.user!.id, orgId);
+        const hasFaceConsent = consents.some(
+          (c: any) => c.consentType === 'face_biometric' && c.consentGiven && !c.revokedAt
+        );
+        if (!hasFaceConsent) {
+          return res.status(403).json({
+            message: "Biometric consent required before face registration"
+          });
+        }
+      }
+
       let updatedUser: User | undefined;
 
       if (faceData.startsWith("data:image/")) {
