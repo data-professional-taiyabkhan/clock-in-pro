@@ -724,6 +724,25 @@ export function registerRoutes(app: Express): Server {
         const assignedLocations = await storage.getEmployeeLocations(req.user!.id);
         console.log("User assigned locations:", assignedLocations);
 
+        // Block clock-in if employee has no assigned locations (clock-out is allowed)
+        if (assignedLocations.length === 0 && action !== 'out') {
+          await AuditLogger.logFaceVerification(
+            req.user!.id,
+            req.user!.organizationId!,
+            false,
+            {
+              deviceInfo,
+              failureReason: "No assigned work locations",
+              metadata: { action }
+            }
+          );
+
+          return res.status(403).json({
+            message: "You're not assigned to a work location yet. Ask your admin to assign you to a location before clocking in.",
+            canUsePin: false
+          });
+        }
+
         if (assignedLocations.length > 0) {
           if (!finalLocation || (!finalLocation.latitude || !finalLocation.longitude)) {
             await AuditLogger.logFaceVerification(
@@ -1008,6 +1027,26 @@ export function registerRoutes(app: Express): Server {
         const { pin, location, userLocation, action } = req.body;
         const finalLocation = location || userLocation;
         const deviceInfo = AuditLogger.extractDeviceInfo(req);
+
+        // Geofence: block clock-in if employee has no assigned locations
+        const assignedLocations = await storage.getEmployeeLocations(req.user!.id);
+        if (assignedLocations.length === 0 && action !== 'out') {
+          await AuditLogger.logPinVerification(
+            req.user!.id,
+            req.user!.organizationId!,
+            false,
+            {
+              deviceInfo,
+              failureReason: "No assigned work locations",
+              metadata: { action }
+            }
+          );
+
+          return res.status(403).json({
+            message: "You're not assigned to a work location yet. Ask your admin to assign you to a location before clocking in.",
+            verified: false
+          });
+        }
 
         const validation = verifyPinSchema.safeParse({ pin });
 
