@@ -31,7 +31,6 @@ export default function EmployeeDashboard() {
   const [faceError, setFaceError] = useState<string>("");
   const [isExtractingDescriptor, setIsExtractingDescriptor] = useState(false);
 
-  console.log('Component render - isCapturing:', isCapturing, 'capturedImage:', !!capturedImage);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -468,7 +467,6 @@ export default function EmployeeDashboard() {
                         <div className="space-y-2">
                           <Button
                             onClick={() => {
-                              console.log('Face check-in button clicked, current isCapturing:', isCapturing);
                               startCamera();
                             }}
                             className="w-full"

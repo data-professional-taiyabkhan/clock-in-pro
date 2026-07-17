@@ -22,7 +22,7 @@ import { analyzeFaceQuality } from "./lib/face-recognition";
 const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
 
 function toSafeUser(user: User) {
-  const { password: _password, ...rest } = user;
+  const { password: _password, faceEmbedding: _faceEmbedding, pinHash: _pinHash, ...rest } = user;
   const hasEmbedding = Array.isArray(user.faceEmbedding)
     ? user.faceEmbedding.length > 0
     : Boolean(user.faceEmbedding);
