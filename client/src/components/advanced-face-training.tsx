@@ -25,6 +25,8 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [modelError, setModelError] = useState<string | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [isCapturing, setIsCapturing] = useState(false);
   const [faceDetected, setFaceDetected] = useState(false);
@@ -94,17 +96,14 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
     const loadModels = async () => {
       try {
         await Promise.all([
-          faceapi.nets.ssdMobilenetv1.loadFromUri('/models'),
+          faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
           faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
           faceapi.nets.faceRecognitionNet.loadFromUri('/models'),
-          faceapi.nets.faceExpressionNet.loadFromUri('/models')
         ]);
         setModelsLoaded(true);
       } catch (error) {
         console.error('Failed to load face-api models:', error);
-        // Fallback to enhanced training without face-api.js
-        console.log('Using enhanced fallback training system');
-        setModelsLoaded(true); // Continue with fallback system
+        setModelError("Face detection couldn't start (models failed to load). Check your connection and refresh.");
       }
     };
 
@@ -125,8 +124,10 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream;
         }
+        setCameraReady(true);
       } catch (error) {
         console.error('Error accessing camera:', error);
+        setModelError('Camera access denied. Please allow camera permission and refresh.');
       }
     };
 
@@ -147,7 +148,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
         // Try face-api.js detection first
         const detections = await faceapi.detectAllFaces(
           videoRef.current!,
-          new faceapi.SsdMobilenetv1Options({ minConfidence: 0.6 })
+          new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
         ).withFaceLandmarks().withFaceDescriptors();
 
         const hasValidFace = detections.length > 0 && detections[0].detection.score > 0.7;
@@ -374,6 +375,38 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
 
   return (
     <div className="w-full max-w-2xl mx-auto space-y-6">
+      {/* Error State */}
+      {modelError && (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center text-red-500 dark:text-red-400 space-y-2">
+              <Camera className="w-12 h-12 mx-auto opacity-60" />
+              <p className="font-medium">{modelError}</p>
+              <Button variant="outline" onClick={() => window.location.reload()}>
+                Refresh Page
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Loading States */}
+      {!modelError && (!modelsLoaded || !cameraReady) && (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center space-y-3">
+              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary mx-auto" />
+              <p className="text-muted-foreground">
+                {!cameraReady ? 'Waiting for camera permission…' : 'Loading face models…'}
+              </p>
+              <p className="text-xs text-muted-foreground">This may take 10–30 seconds on mobile data.</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {modelError ? null : (!modelsLoaded || !cameraReady) ? null : (
+      <>
       {/* Progress */}
       <div className="space-y-2">
         <div className="flex justify-between text-sm">
@@ -484,15 +517,15 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
             key={step.id}
             className={`p-3 rounded-lg border text-center ${
               step.completed 
-                ? 'bg-green-50 border-green-200' 
+                ? 'bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-700' 
                 : index === currentStepIndex
-                ? 'bg-blue-50 border-blue-200'
-                : 'bg-gray-50 border-gray-200'
+                ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700'
+                : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700'
             }`}
           >
             <div className="flex justify-center mb-1">
               {step.completed ? (
-                <CheckCircle className="w-4 h-4 text-green-600" />
+                <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400" />
               ) : (
                 step.icon
               )}
@@ -503,6 +536,8 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
       </div>
 
       <canvas ref={canvasRef} className="hidden" />
+      </>
+      )}
     </div>
   );
 

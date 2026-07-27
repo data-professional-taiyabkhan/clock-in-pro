@@ -7,14 +7,13 @@ export class FaceRecognitionService {
     if (this.modelsLoaded) return;
     
     try {
-      // Load face-api.js models from CDN
-      const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@latest/model';
+      // Load face-api.js models from local /models directory
+      const MODEL_URL = '/models';
       
       await Promise.all([
-        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
         faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
         faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-        faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL)
       ]);
       
       this.modelsLoaded = true;
@@ -39,7 +38,7 @@ export class FaceRecognitionService {
 
       // Detect faces with landmarks and descriptors
       const detections = await faceapi
-        .detectAllFaces(imageElement, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+        .detectAllFaces(imageElement, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }))
         .withFaceLandmarks()
         .withFaceDescriptors();
 
@@ -134,7 +133,7 @@ export class FaceRecognitionService {
       }
 
       const detection = await faceapi
-        .detectSingleFace(video, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3 }))
+        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.3 }))
         .withFaceLandmarks();
 
       if (!detection) {
