@@ -34,7 +34,7 @@ import {
   type InsertEmployeeConsent,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, isNull, lt } from "drizzle-orm";
 
 
 export interface IStorage {
@@ -69,6 +69,8 @@ export interface IStorage {
   getUserAttendanceRecords(userId: number, limit?: number): Promise<AttendanceRecord[]>;
   getTodayAttendanceRecord(userId: number, date: string): Promise<AttendanceRecord | undefined>;
   getAllAttendanceRecords(organizationId?: number, limit?: number): Promise<AttendanceRecord[]>;
+  getActiveAttendanceRecord(userId: number): Promise<AttendanceRecord | undefined>;
+  getOpenAttendanceRecords(olderThan: Date): Promise<AttendanceRecord[]>;
 
   // Location operations
   createLocation(location: InsertLocation): Promise<Location>;
@@ -416,6 +418,23 @@ export class DatabaseStorage implements IStorage {
       .from(attendanceRecords)
       .orderBy(desc(attendanceRecords.createdAt))
       .limit(limit);
+  }
+
+  async getActiveAttendanceRecord(userId: number): Promise<AttendanceRecord | undefined> {
+    const [record] = await db
+      .select()
+      .from(attendanceRecords)
+      .where(and(eq(attendanceRecords.userId, userId), isNull(attendanceRecords.clockOutTime)))
+      .orderBy(desc(attendanceRecords.clockInTime))
+      .limit(1);
+    return record || undefined;
+  }
+
+  async getOpenAttendanceRecords(olderThan: Date): Promise<AttendanceRecord[]> {
+    return await db
+      .select()
+      .from(attendanceRecords)
+      .where(and(isNull(attendanceRecords.clockOutTime), lt(attendanceRecords.clockInTime, olderThan)));
   }
 
   // ─── Locations ──────────────────────────────

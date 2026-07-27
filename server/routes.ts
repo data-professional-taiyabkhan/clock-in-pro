@@ -1533,19 +1533,25 @@ export function registerRoutes(app: Express): Server {
           return total;
         }, 0);
 
-        // Calculate today's status
+        // Calculate today's status using single source of truth
         const today = format(new Date(), "yyyy-MM-dd");
         const todayRecords = records.filter(record => record.date === today);
-        const isCurrentlyWorking = todayRecords.some(record => !record.clockOutTime);
+
+        // Use the global active record check
+        const activeRecord = await storage.getActiveAttendanceRecord(employee.id);
+        const MAX_SHIFT_MS = 14 * 60 * 60 * 1000;
+        const isCurrentlyWorking = !!activeRecord
+          && (Date.now() - new Date(activeRecord.clockInTime).getTime()) < MAX_SHIFT_MS;
 
         const todayHours = todayRecords.reduce((total, record) => {
           if (record.clockOutTime) {
             const minutes = differenceInMinutes(new Date(record.clockOutTime), new Date(record.clockInTime));
             return total + (minutes / 60);
-          } else if (isCurrentlyWorking) {
-            // Add current session time
-            const minutes = differenceInMinutes(new Date(), new Date(record.clockInTime));
-            return total + (minutes / 60);
+          } else {
+            // Cap open session at MAX_SHIFT_HOURS
+            const elapsedMs = Date.now() - new Date(record.clockInTime).getTime();
+            const cappedMs = Math.min(elapsedMs, MAX_SHIFT_MS);
+            return total + (cappedMs / 3600000);
           }
           return total;
         }, 0);
@@ -1815,15 +1821,25 @@ export function registerRoutes(app: Express): Server {
     try {
       const today = format(new Date(), "yyyy-MM-dd");
 
-      // Get all records for today and check if any are still active (not clocked out)
+      // Get all records for today
       const records = await storage.getUserAttendanceRecords(req.user!.id, 10);
       const todayRecords = records.filter(record => record.date === today);
-      const activeRecord = todayRecords.find(record => !record.clockOutTime);
+
+      // Single source of truth: find ANY open record regardless of date
+      const activeRecord = await storage.getActiveAttendanceRecord(req.user!.id);
+
+      // An open record older than MAX_SHIFT_HOURS is a forgotten clock-out, not "working"
+      const MAX_SHIFT_MS = 14 * 60 * 60 * 1000;
+      const isActiveValid = activeRecord
+        ? (Date.now() - new Date(activeRecord.clockInTime).getTime()) < MAX_SHIFT_MS
+        : false;
 
       res.json({
-        record: todayRecords[0] || null, // Most recent record for today
-        records: todayRecords, // All records for today
-        isClockedIn: !!activeRecord
+        record: todayRecords[0] || null,
+        records: todayRecords,
+        activeRecord: activeRecord || null,
+        isClockedIn: !!activeRecord && isActiveValid,
+        hasForgottenClockOut: !!activeRecord && !isActiveValid
       });
     } catch (error) {
       console.error("Get today attendance error:", error);
