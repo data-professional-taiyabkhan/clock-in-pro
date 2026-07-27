@@ -10,6 +10,7 @@ import { registerPinRoutes } from "./routes/pin.routes";
 import { registerPasswordRoutes } from "./routes/password.routes";
 import { requireActiveSubscription } from "./middleware/entitlement";
 import { startTrialExpiryReminderJob } from "./jobs/trial-expiry-reminder";
+import { startAutoClockoutJob } from "./jobs/auto-clockout";
 import { setupVite, serveStatic, log } from "./vite";
 import { getEnvironment } from "./lib/environment";
 
@@ -101,5 +102,6 @@ app.use((req, res, next) => {
 
     // Start background jobs
     startTrialExpiryReminderJob();
+    startAutoClockoutJob();
   });
 })();
