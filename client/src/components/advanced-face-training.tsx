@@ -276,7 +276,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
 
       try {
         // Try face-api.js descriptor first
-        const detections = await faceapi.detectAllFaces(video, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.6 }))
+        const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }))
           .withFaceLandmarks()
           .withFaceDescriptors();
 

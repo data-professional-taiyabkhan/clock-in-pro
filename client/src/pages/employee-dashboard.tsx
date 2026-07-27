@@ -33,7 +33,6 @@ export default function EmployeeDashboard() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -86,29 +85,6 @@ export default function EmployeeDashboard() {
     });
   };
 
-  // Face image upload mutation
-  const uploadFaceMutation = useMutation({
-    mutationFn: async (imageData: string) => {
-      return await apiRequest("/api/upload-face-image", {
-        method: "POST",
-        body: JSON.stringify({ imageData }),
-      });
-    },
-    onSuccess: () => {
-      toast({
-        title: "Success",
-        description: "Face image uploaded successfully",
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/user"] });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Upload Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
 
   // Face verification mutation
   const verifyFaceMutation = useMutation({
@@ -292,17 +268,6 @@ export default function EmployeeDashboard() {
     }
   };
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const imageData = e.target?.result as string;
-        uploadFaceMutation.mutate(imageData);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
 
   const handleFaceCheckIn = async () => {
     if (!capturedImage) return;

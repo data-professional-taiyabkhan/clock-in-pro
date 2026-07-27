@@ -758,7 +758,7 @@ export function registerRoutes(app: Express): Server {
 
             return res.status(400).json({
               message: "Location verification required. Please enable location services and try again.",
-              canUsePin: req.user.pinEnabled
+              canUsePin: req.user!.pinEnabled
             });
           }
 
@@ -802,7 +802,7 @@ export function registerRoutes(app: Express): Server {
 
             return res.status(403).json({
               message: `You are not within range of any assigned work location (${locationNames}). Please move closer to your assigned work location.`,
-              canUsePin: req.user.pinEnabled
+              canUsePin: req.user!.pinEnabled
             });
           }
 
@@ -831,7 +831,7 @@ export function registerRoutes(app: Express): Server {
           return res.status(400).json({
             verified: false,
             message: `Liveness detection failed: ${livenessResult.error}`,
-            canUsePin: req.user.pinEnabled
+            canUsePin: req.user!.pinEnabled
           });
         }
 
@@ -858,7 +858,7 @@ export function registerRoutes(app: Express): Server {
           return res.status(400).json({
             verified: false,
             message: `Liveness verification failed. ${livenessResult.recommendations?.[0] || 'Please ensure you are using a live camera feed.'}`,
-            canUsePin: req.user.pinEnabled,
+            canUsePin: req.user!.pinEnabled,
             livenessScore: livenessResult.livenessScore,
             recommendations: livenessResult.recommendations
           });
@@ -885,7 +885,7 @@ export function registerRoutes(app: Express): Server {
           return res.status(400).json({
             verified: false,
             message: "Face verification needs an on-device face scan. Please refresh the page and try again.",
-            canUsePin: req.user.pinEnabled
+            canUsePin: req.user!.pinEnabled
           });
         }
 
@@ -894,7 +894,7 @@ export function registerRoutes(app: Express): Server {
           const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
           return v.map(x => x / norm);
         };
-        const reg = normalize(req.user.faceEmbedding as number[]);
+        const reg = normalize(req.user!.faceEmbedding as number[]);
         const probe = normalize(descriptor as number[]);
         const dist = calculateEuclideanDistance(reg, probe);
         const threshold = 0.6;
@@ -928,7 +928,7 @@ export function registerRoutes(app: Express): Server {
               return res.status(400).json({
                 verified: false,
                 message: "No active clock-in found for today or already clocked out.",
-                canUsePin: req.user.pinEnabled
+                canUsePin: req.user!.pinEnabled
               });
             }
             attendanceRecord = await storage.updateAttendanceRecord(todayRecord.id, { clockOutTime: new Date() });
@@ -972,7 +972,7 @@ export function registerRoutes(app: Express): Server {
           return res.status(400).json({
             verified: false,
             message: "Face didn't match. Try better lighting, or use your PIN.",
-            canUsePin: req.user.pinEnabled,
+            canUsePin: req.user!.pinEnabled,
             technical_details: {
               distance: dist.toFixed(4),
               threshold,
