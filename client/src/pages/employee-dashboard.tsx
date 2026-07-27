@@ -398,31 +398,31 @@ export default function EmployeeDashboard() {
           </TabsList>
 
           <TabsContent value="attendance" className="space-y-6">
-            {/* Face Registration Status */}
-            {!user.faceImageUrl && (
+            {/* Face Registration Status — honest banners */}
+            {!user.faceRegistered && !user.faceImageUrl && (
               <Alert>
                 <Camera className="h-4 w-4" />
                 <AlertDescription>
-                  Your face image hasn't been registered yet. Please contact your admin to set up your face image for check-in.
+                  Face verification isn't set up yet. Go to Settings → Clock-In Settings → Set up face verification, or use PIN to clock in.
                 </AlertDescription>
               </Alert>
             )}
 
-            {user.faceImageUrl ? (
+            {user.faceImageUrl && !user.faceRegistered && (
               <Alert>
                 <Camera className="h-4 w-4" />
                 <AlertDescription>
-                  Face image registered successfully. You can now use face check-in.
+                  A reference photo is on file. Face clock-in still needs setup: Settings → Clock-In Settings → Set up face verification.
                   <div className="mt-2">
                     <img
                       src={user.faceImageUrl}
-                      alt="Your registered face"
+                      alt="Reference photo"
                       className="w-16 h-16 rounded-full object-cover border"
                     />
                   </div>
                 </AlertDescription>
               </Alert>
-            ) : null}
+            )}
 
             {/* Today's Status */}
             <Card>
