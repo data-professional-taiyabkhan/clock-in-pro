@@ -1631,19 +1631,28 @@ export function registerRoutes(app: Express): Server {
       });
 
       // Calculate daily breakdown with proper grouping
+      const MAX_SHIFT_SECONDS = 14 * 3600;
+      const MAX_SHIFT_MS = 14 * 60 * 60 * 1000;
       const dailyBreakdown = Array.from(dailyGroups.entries()).map(([date, dayRecords]) => {
         let totalDaySeconds = 0;
         let isCurrentlyWorking = false;
+        let hasAutoClockout = false;
 
         dayRecords.forEach(record => {
           if (record.clockOutTime) {
             const sessionSeconds = differenceInSeconds(new Date(record.clockOutTime), new Date(record.clockInTime));
             totalDaySeconds += sessionSeconds;
           } else {
-            // Currently working session
-            isCurrentlyWorking = true;
-            const sessionSeconds = differenceInSeconds(new Date(), new Date(record.clockInTime));
-            totalDaySeconds += sessionSeconds;
+            const elapsedMs = Date.now() - new Date(record.clockInTime).getTime();
+            if (elapsedMs < MAX_SHIFT_MS) {
+              isCurrentlyWorking = true;
+              totalDaySeconds += Math.floor(elapsedMs / 1000);
+            } else {
+              totalDaySeconds += MAX_SHIFT_SECONDS;
+            }
+          }
+          if (record.notes && record.notes.includes('Auto clocked out')) {
+            hasAutoClockout = true;
           }
         });
 
@@ -1662,6 +1671,7 @@ export function registerRoutes(app: Express): Server {
           secondsWorked,
           totalHours,
           isCurrentlyWorking,
+          hasAutoClockout,
           sessionCount: dayRecords.length,
           notes: dayRecords.map(r => r.notes).filter(Boolean).join('; ') || null
         };
@@ -1741,24 +1751,39 @@ export function registerRoutes(app: Express): Server {
       });
 
       // Calculate daily breakdown with proper grouping
+      const MAX_SHIFT_SECONDS = 14 * 3600;
+      const MAX_SHIFT_MS = 14 * 60 * 60 * 1000;
+
       const dailyBreakdown = Array.from(dailyGroups.entries()).map(([date, dayRecords]) => {
         let totalDaySeconds = 0;
         let isCurrentlyWorking = false;
+        let hasAutoClockout = false;
         let clockInTimes: string[] = [];
         let clockOutTimes: string[] = [];
 
         dayRecords.forEach(record => {
-          clockInTimes.push(format(new Date(record.clockInTime), 'HH:mm:ss'));
+          // Send raw ISO times — client formats in local timezone
+          clockInTimes.push(new Date(record.clockInTime).toISOString());
 
           if (record.clockOutTime) {
-            clockOutTimes.push(format(new Date(record.clockOutTime), 'HH:mm:ss'));
+            clockOutTimes.push(new Date(record.clockOutTime).toISOString());
             const sessionSeconds = differenceInSeconds(new Date(record.clockOutTime), new Date(record.clockInTime));
             totalDaySeconds += sessionSeconds;
           } else {
-            // Currently working session
-            isCurrentlyWorking = true;
-            const sessionSeconds = differenceInSeconds(new Date(), new Date(record.clockInTime));
-            totalDaySeconds += sessionSeconds;
+            // Open record — cap at MAX_SHIFT_HOURS
+            const elapsedMs = Date.now() - new Date(record.clockInTime).getTime();
+            if (elapsedMs < MAX_SHIFT_MS) {
+              isCurrentlyWorking = true;
+              totalDaySeconds += Math.floor(elapsedMs / 1000);
+            } else {
+              // Stale open record — count at most MAX_SHIFT_HOURS
+              totalDaySeconds += MAX_SHIFT_SECONDS;
+            }
+          }
+
+          // Flag auto-clockout notes
+          if (record.notes && record.notes.includes('Auto clocked out')) {
+            hasAutoClockout = true;
           }
         });
 
@@ -1777,6 +1802,7 @@ export function registerRoutes(app: Express): Server {
           secondsWorked,
           totalHours,
           isCurrentlyWorking,
+          hasAutoClockout,
           clockInFormatted: clockInTimes.join(', '),
           clockOutFormatted: clockOutTimes.length > 0 ? clockOutTimes.join(', ') : null,
           dateFormatted: format(new Date(date), 'MMM dd, yyyy'),
@@ -1785,15 +1811,21 @@ export function registerRoutes(app: Express): Server {
         };
       });
 
-      // Calculate totals
+      // Calculate totals — Days Worked = distinct dates with closed or valid-open records
       const totalHours = dailyBreakdown.reduce((sum, day) => sum + day.totalHours, 0);
       const totalMinutes = Math.floor((totalHours % 1) * 60);
       const totalWholeHours = Math.floor(totalHours);
       const totalSeconds = Math.floor(((totalHours % 1) * 60 % 1) * 60);
 
-      // Check if currently working
-      const today = format(new Date(), "yyyy-MM-dd");
-      const todayRecord = dailyBreakdown.find(record => record.date === today && record.isCurrentlyWorking);
+      // "Days worked" = days with closed records or valid in-progress sessions
+      const daysWorked = dailyBreakdown.filter(d =>
+        d.clockOutTime || d.isCurrentlyWorking
+      ).length;
+
+      // Use getActiveAttendanceRecord for global "currently working" status
+      const activeRecord = await storage.getActiveAttendanceRecord(req.user!.id);
+      const globalIsWorking = !!activeRecord
+        && (Date.now() - new Date(activeRecord.clockInTime).getTime()) < MAX_SHIFT_MS;
 
       res.json({
         period,
@@ -1804,10 +1836,10 @@ export function registerRoutes(app: Express): Server {
           totalWholeHours,
           totalMinutes,
           totalSeconds,
-          totalDays: dailyBreakdown.length,
-          averageHoursPerDay: dailyBreakdown.length > 0 ? Math.round((totalHours / dailyBreakdown.length) * 100) / 100 : 0,
-          isCurrentlyWorking: !!todayRecord,
-          currentSessionStart: todayRecord?.clockInTime || null
+          totalDays: daysWorked || dailyBreakdown.length,
+          averageHoursPerDay: daysWorked > 0 ? Math.round((totalHours / daysWorked) * 100) / 100 : 0,
+          isCurrentlyWorking: globalIsWorking,
+          currentSessionStart: activeRecord?.clockInTime || null
         },
         dailyRecords: dailyBreakdown.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
       });
