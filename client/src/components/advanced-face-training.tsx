@@ -397,7 +397,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
       {modelError && (
         <Card>
           <CardContent className="pt-6">
-            <div className="text-center text-red-500 dark:text-red-400 space-y-2">
+            <div className="text-center text-destructive space-y-2">
               <Camera className="w-12 h-12 mx-auto opacity-60" />
               <p className="font-medium">{modelError}</p>
               <Button variant="outline" onClick={() => window.location.reload()}>
@@ -442,7 +442,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
               {currentStep.icon}
               <h3 className="text-lg font-semibold ml-2">{currentStep.name}</h3>
             </div>
-            <p className="text-gray-600">{currentStep.instruction}</p>
+            <p className="text-muted-foreground">{currentStep.instruction}</p>
           </div>
 
           {/* Camera Feed */}
@@ -501,7 +501,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
                   {poseValidation.message}
                 </div>
                 {poseValidation.confidence > 0 && (
-                  <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="w-full bg-muted rounded-full h-2">
                     <div 
                       className={`h-2 rounded-full transition-all duration-300 ${
                         poseValidation.confidence > 0.7 ? 'bg-green-500' : 'bg-amber-500'
@@ -545,16 +545,16 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
           <div
             key={step.id}
             className={`p-3 rounded-lg border text-center ${
-              step.completed 
-                ? 'bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-700' 
+              step.completed
+                ? 'bg-emerald-500/10 border-emerald-500/30'
                 : index === currentStepIndex
-                ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700'
-                : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                ? 'bg-primary/10 border-primary/30'
+                : 'bg-muted border-border'
             }`}
           >
             <div className="flex justify-center mb-1">
               {step.completed ? (
-                <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400" />
+                <CheckCircle className="w-4 h-4 text-emerald-600" />
               ) : (
                 step.icon
               )}
