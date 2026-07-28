@@ -27,6 +27,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
+  const [videoStreaming, setVideoStreaming] = useState(false);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [isCapturing, setIsCapturing] = useState(false);
   const [faceDetected, setFaceDetected] = useState(false);
@@ -111,19 +112,20 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
   }, []);
 
   useEffect(() => {
+    // Camera: request stream; do NOT touch videoRef here — the video element
+    // may not exist yet (render is gated). srcObject is set in a dedicated effect below.
+    let localStream: MediaStream | null = null;
+
     const startCamera = async () => {
       try {
-        const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { 
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: {
             width: { ideal: 1280 },
             height: { ideal: 720 },
             facingMode: 'user'
           }
         });
-        setStream(mediaStream);
-        if (videoRef.current) {
-          videoRef.current.srcObject = mediaStream;
-        }
+        setStream(localStream);
         setCameraReady(true);
       } catch (error) {
         console.error('Error accessing camera:', error);
@@ -133,30 +135,47 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
 
     startCamera();
 
+    // Cleanup: stop tracks from the LOCAL variable, not from state
+    // (state is captured as null at mount due to the closure)
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
+      localStream?.getTracks().forEach(t => t.stop());
     };
   }, []);
+
+  // Dedicated effect: attach stream to the video element once BOTH exist.
+  // Runs whenever stream or the render gates change — fires after the <video>
+  // mounts, regardless of which happened first.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !stream) return;
+    if (v.srcObject !== stream) v.srcObject = stream;
+    v.play().catch(() => { /* autoplay retry on user gesture */ });
+  }, [stream, modelsLoaded, cameraReady, modelError]);
+
 
   useEffect(() => {
     if (!modelsLoaded || !videoRef.current) return;
 
     const detectFace = async () => {
+      const v = videoRef.current;
+      // Guard: video must have frames before we run face-api
+      if (!v || v.readyState < 2 || v.videoWidth === 0) return;
+
+      if (!videoStreaming) {
+        console.log('[face-training] detection started', v.videoWidth, 'x', v.videoHeight);
+        setVideoStreaming(true);
+      }
+
       try {
-        // Try face-api.js detection first
         const detections = await faceapi.detectAllFaces(
-          videoRef.current!,
+          v,
           new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
         ).withFaceLandmarks().withFaceDescriptors();
 
         const hasValidFace = detections.length > 0 && detections[0].detection.score > 0.7;
         setFaceDetected(hasValidFace);
 
-        // Auto-capture when face is well-positioned and stable
         if (hasValidFace && !isCapturing && !currentStep.completed) {
-          // Check if face is in good position for current step
           if (isFaceInCorrectPosition(detections[0], currentStep.id)) {
             startCountdown();
           }
@@ -165,26 +184,25 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
         // Fallback to basic face detection
         const hasBasicFace = analyzeVideoForFace();
         setFaceDetected(hasBasicFace);
-        
-        // Validate pose and auto-capture
+
         if (hasBasicFace && !isCapturing && !currentStep.completed) {
           const poseCheck = validatePoseForStep(currentStep.id);
           setPoseValidation(poseCheck);
-          
+
           if (poseCheck.isCorrectPose && poseCheck.confidence > 0.7) {
             startCountdown();
           }
         } else {
-          setPoseValidation({ 
-            isCorrectPose: false, 
-            confidence: 0, 
-            message: hasBasicFace ? 'Adjust your pose as instructed' : 'Face not detected' 
+          setPoseValidation({
+            isCorrectPose: false,
+            confidence: 0,
+            message: hasBasicFace ? 'Adjust your pose as instructed' : 'Face not detected'
           });
         }
       }
     };
 
-    const interval = setInterval(detectFace, 200); // Faster detection
+    const interval = setInterval(detectFace, 200);
     return () => clearInterval(interval);
   }, [modelsLoaded, currentStepIndex, isCapturing]);
 
@@ -434,9 +452,20 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
               autoPlay
               playsInline
               muted
+              onLoadedMetadata={() => setVideoStreaming(true)}
               className="w-full rounded-lg border"
               style={{ transform: 'scaleX(-1)' }}
             />
+
+            {/* Starting camera overlay — shown while stream attached but no frames yet */}
+            {stream && !videoStreaming && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-lg">
+                <div className="text-white text-sm font-medium text-center space-y-2">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white mx-auto" />
+                  <span>Starting camera…</span>
+                </div>
+              </div>
+            )}
             
             {/* Face Detection Overlay */}
             {faceDetected && (
