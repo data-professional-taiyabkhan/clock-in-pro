@@ -27,21 +27,20 @@ export function SimpleFaceCapture({
   const [isCapturing, setIsCapturing] = useState(false);
   const { toast } = useToast();
 
-  // Initialize camera
+  // Initialize camera: request stream only; srcObject attached in a separate effect
   useEffect(() => {
+    let localStream: MediaStream | null = null;
+
     const initializeCamera = async () => {
       try {
-        const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { 
-            width: { ideal: 1280 }, 
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
             height: { ideal: 720 },
             facingMode: 'user'
           }
         });
-        setStream(mediaStream);
-        if (videoRef.current) {
-          videoRef.current.srcObject = mediaStream;
-        }
+        setStream(localStream);
         setDetectionStatus('Position your face in the camera');
       } catch (error) {
         console.error('Camera access failed:', error);
@@ -56,12 +55,19 @@ export function SimpleFaceCapture({
 
     initializeCamera();
 
+    // Stop tracks from local variable — state is null at mount
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
+      localStream?.getTracks().forEach(t => t.stop());
     };
   }, [toast]);
+
+  // Attach stream once the video element exists
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !stream) return;
+    if (v.srcObject !== stream) v.srcObject = stream;
+    v.play().catch(() => {});
+  }, [stream]);
 
   // Basic face detection
   useEffect(() => {
@@ -72,6 +78,8 @@ export function SimpleFaceCapture({
         const video = videoRef.current;
         const canvas = canvasRef.current;
         if (!video || !canvas) return;
+        // Guard: no frames yet
+        if (video.readyState < 2 || video.videoWidth === 0) return;
 
         const context = canvas.getContext('2d');
         if (!context) return;

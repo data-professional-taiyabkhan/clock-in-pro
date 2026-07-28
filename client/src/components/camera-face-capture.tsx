@@ -31,14 +31,14 @@ export function CameraFaceCapture({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const detectionIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const streamRef = useRef<MediaStream | null>(null); // for cleanup
   const { toast } = useToast();
 
   useEffect(() => {
     loadModels();
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
+      // Use ref — state is null at mount due to closure
+      streamRef.current?.getTracks().forEach(t => t.stop());
       if (detectionIntervalRef.current) {
         clearInterval(detectionIntervalRef.current);
       }
@@ -87,6 +87,7 @@ export function CameraFaceCapture({
         audio: false
       });
       setStream(mediaStream);
+      streamRef.current = mediaStream; // keep ref in sync for cleanup
       setDetectionStatus('Camera started - preparing detection...');
     } catch (error) {
       console.error('Error accessing camera:', error);
