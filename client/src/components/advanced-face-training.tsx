@@ -32,6 +32,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
   const [isCapturing, setIsCapturing] = useState(false);
   const [faceDetected, setFaceDetected] = useState(false);
   const [countdown, setCountdown] = useState(0);
+  const [noFaceSeconds, setNoFaceSeconds] = useState(0);
   const lastLogTime = useRef(0);
   const [poseValidation, setPoseValidation] = useState<{
     isCorrectPose: boolean;
@@ -175,6 +176,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
 
         const hasValidFace = detections.length > 0;
         setFaceDetected(hasValidFace);
+        if (hasValidFace) setNoFaceSeconds(0);
 
         // Throttled diagnostic log (max once per second)
         const now = Date.now();
@@ -217,6 +219,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
         // Fallback to basic face detection
         const hasBasicFace = analyzeVideoForFace();
         setFaceDetected(hasBasicFace);
+        if (hasBasicFace) setNoFaceSeconds(0);
 
         if (hasBasicFace && !isCapturing && !currentStep.completed) {
           const poseCheck = validatePoseForStep(currentStep.id);
@@ -236,7 +239,16 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
     };
 
     const interval = setInterval(detectFace, 200);
-    return () => clearInterval(interval);
+
+    // Increment no-face counter every second; resets happen inside detectFace
+    const noFaceInterval = setInterval(() => {
+      setNoFaceSeconds(prev => prev + 1);
+    }, 1000);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(noFaceInterval);
+    };
   }, [modelsLoaded, currentStepIndex, isCapturing]);
 
   const isFaceInCorrectPosition = (detection: any, stepId: string): boolean => {
@@ -353,6 +365,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
           setTimeout(() => {
             setCurrentStepIndex(prev => prev + 1);
             setIsCapturing(false);
+            setNoFaceSeconds(0);
             setPoseValidation({ isCorrectPose: false, confidence: 0, message: 'Position your face as instructed' });
           }, 500); // Faster transition
         } else {
@@ -550,8 +563,38 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
             )}
           </div>
 
-          {/* Controls */}
-          <div className="flex justify-center space-x-3 mt-4">
+          {/* Manual Capture Controls */}
+          <div className="flex flex-col items-center gap-2 mt-4">
+            {/* Primary capture — enabled when face is visible */}
+            {!currentStep.completed && (
+              <Button
+                onClick={() => startCountdown()}
+                disabled={!faceDetected || isCapturing}
+                className="w-full max-w-xs"
+              >
+                {isCapturing ? 'Capturing…' : faceDetected ? 'Capture' : 'Waiting for face…'}
+              </Button>
+            )}
+
+            {/* Fallback — appears after 10 continuous seconds without detection */}
+            {!currentStep.completed && !faceDetected && noFaceSeconds >= 10 && !isCapturing && (
+              <div className="text-center space-y-1">
+                <Button
+                  variant="outline"
+                  onClick={() => startCountdown()}
+                  className="w-full max-w-xs"
+                >
+                  Capture anyway
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  Auto-detection isn't recognising the pose — capture manually.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Step controls */}
+          <div className="flex justify-center space-x-3 mt-2">
             {currentStep.completed && currentStepIndex < trainingSteps.length - 1 && (
               <Button onClick={() => {
                 setCurrentStepIndex(prev => prev + 1);
