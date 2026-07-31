@@ -3,7 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent } from "@/components/ui/card";
-import { Camera, CheckCircle, RotateCcw, RotateCw, Move } from "lucide-react";
+import { Camera, CheckCircle, RotateCcw, RotateCw } from "lucide-react";
 import * as faceapi from 'face-api.js';
 
 interface AdvancedFaceTrainingProps {
@@ -56,38 +56,10 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
       completed: false
     },
     {
-      id: 'right', 
+      id: 'right',
       name: 'Turn Right',
       instruction: 'Slowly turn your head to the right (your right)',
       icon: <RotateCw className="w-5 h-5" />,
-      completed: false
-    },
-    {
-      id: 'up',
-      name: 'Look Up',
-      instruction: 'Tilt your head slightly upward',
-      icon: <Move className="w-5 h-5" />,
-      completed: false
-    },
-    {
-      id: 'down',
-      name: 'Look Down', 
-      instruction: 'Tilt your head slightly downward',
-      icon: <Move className="w-5 h-5" />,
-      completed: false
-    },
-    {
-      id: 'close',
-      name: 'Move Closer',
-      instruction: 'Move closer to the camera (fill more of the frame)',
-      icon: <Camera className="w-5 h-5" />,
-      completed: false
-    },
-    {
-      id: 'far',
-      name: 'Move Back',
-      instruction: 'Move back from the camera (show more of your shoulders)',
-      icon: <Camera className="w-5 h-5" />,
       completed: false
     }
   ]);
@@ -385,7 +357,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
     // Combine all descriptors into a comprehensive training model
     const completedSteps = trainingSteps.filter(step => step.completed && step.descriptor);
     
-    if (completedSteps.length >= 5) {
+    if (completedSteps.length >= 2) {
       // Create averaged descriptor from all captures
       const descriptorLength = completedSteps[0].descriptor!.length;
       const averagedDescriptor = new Array(descriptorLength).fill(0);
@@ -616,7 +588,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
       </Card>
 
       {/* Steps Overview */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         {trainingSteps.map((step, index) => (
           <div
             key={step.id}
