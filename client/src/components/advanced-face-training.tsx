@@ -32,6 +32,7 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
   const [isCapturing, setIsCapturing] = useState(false);
   const [faceDetected, setFaceDetected] = useState(false);
   const [countdown, setCountdown] = useState(0);
+  const lastLogTime = useRef(0);
   const [poseValidation, setPoseValidation] = useState<{
     isCorrectPose: boolean;
     confidence: number;
@@ -172,15 +173,47 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
           new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
         ).withFaceLandmarks().withFaceDescriptors();
 
-        const hasValidFace = detections.length > 0 && detections[0].detection.score > 0.7;
+        const hasValidFace = detections.length > 0;
         setFaceDetected(hasValidFace);
 
-        if (hasValidFace && !isCapturing && !currentStep.completed) {
-          if (isFaceInCorrectPosition(detections[0], currentStep.id)) {
+        // Throttled diagnostic log (max once per second)
+        const now = Date.now();
+        if (now - lastLogTime.current > 1000) {
+          lastLogTime.current = now;
+          const posOk = hasValidFace ? isFaceInCorrectPosition(detections[0], currentStep.id) : null;
+          console.log('[face-training]', {
+            step: currentStep.id,
+            detections: detections.length,
+            score: detections[0]?.detection.score?.toFixed(2),
+            positionOk: posOk
+          });
+        }
+
+        if (!hasValidFace) {
+          setPoseValidation({
+            isCorrectPose: false,
+            confidence: 0,
+            message: 'No face detected — move into the light and centre your face'
+          });
+        } else if (!isCapturing && !currentStep.completed) {
+          const positionOk = isFaceInCorrectPosition(detections[0], currentStep.id);
+          if (positionOk) {
+            setPoseValidation({
+              isCorrectPose: true,
+              confidence: detections[0].detection.score,
+              message: 'Hold still…'
+            });
             startCountdown();
+          } else {
+            setPoseValidation({
+              isCorrectPose: false,
+              confidence: detections[0].detection.score,
+              message: 'Face detected — hold still and follow the instruction'
+            });
           }
         }
       } catch (error) {
+        console.error('[face-training] detectAllFaces threw', error);
         // Fallback to basic face detection
         const hasBasicFace = analyzeVideoForFace();
         setFaceDetected(hasBasicFace);
