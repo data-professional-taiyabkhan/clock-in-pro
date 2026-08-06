@@ -720,28 +720,11 @@ export function registerRoutes(app: Express): Server {
           });
         }
 
-        // Step 1: Location verification - check if user is assigned to any locations
+        // Step 1: Location verification
+        // If employee has assigned locations, enforce geofencing.
+        // If no locations are assigned, skip geofencing — they can clock in from anywhere.
         const assignedLocations = await storage.getEmployeeLocations(req.user!.id);
         console.log("User assigned locations:", assignedLocations);
-
-        // Block clock-in if employee has no assigned locations (clock-out is allowed)
-        if (assignedLocations.length === 0 && action !== 'out') {
-          await AuditLogger.logFaceVerification(
-            req.user!.id,
-            req.user!.organizationId!,
-            false,
-            {
-              deviceInfo,
-              failureReason: "No assigned work locations",
-              metadata: { action }
-            }
-          );
-
-          return res.status(403).json({
-            message: "You're not assigned to a work location yet. Ask your admin to assign you to a location before clocking in.",
-            canUsePin: false
-          });
-        }
 
         if (assignedLocations.length > 0) {
           if (!finalLocation || (!finalLocation.latitude || !finalLocation.longitude)) {
@@ -1028,25 +1011,9 @@ export function registerRoutes(app: Express): Server {
         const finalLocation = location || userLocation;
         const deviceInfo = AuditLogger.extractDeviceInfo(req);
 
-        // Geofence: block clock-in if employee has no assigned locations
+        // Geofence: only enforce if the employee has assigned locations.
+        // Employees with no assigned locations can clock in from anywhere.
         const assignedLocations = await storage.getEmployeeLocations(req.user!.id);
-        if (assignedLocations.length === 0 && action !== 'out') {
-          await AuditLogger.logPinVerification(
-            req.user!.id,
-            req.user!.organizationId!,
-            false,
-            {
-              deviceInfo,
-              failureReason: "No assigned work locations",
-              metadata: { action }
-            }
-          );
-
-          return res.status(403).json({
-            message: "You're not assigned to a work location yet. Ask your admin to assign you to a location before clocking in.",
-            verified: false
-          });
-        }
 
         const validation = verifyPinSchema.safeParse({ pin });
 
