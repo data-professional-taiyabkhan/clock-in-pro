@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
 import { faceRecognition } from "@/lib/face-recognition";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +30,7 @@ export default function EmployeeDashboard() {
   const [, setLocation_] = useLocation();
   const [faceError, setFaceError] = useState<string>("");
   const [isExtractingDescriptor, setIsExtractingDescriptor] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -85,6 +86,14 @@ export default function EmployeeDashboard() {
     });
   };
 
+  // Attach stream once the <video> element is in the DOM (isCapturing = true means it just mounted)
+  useEffect(() => {
+    const v = videoRef.current;
+    const s = streamRef.current;
+    if (!v || !s) return;
+    if (v.srcObject !== s) v.srcObject = s;
+    v.play().catch(() => {});
+  }, [isCapturing]);
 
   // Face verification mutation
   const verifyFaceMutation = useMutation({
@@ -207,34 +216,14 @@ export default function EmployeeDashboard() {
   const startCamera = async () => {
     try {
       console.log('Starting camera...');
+      setVideoReady(false);
       setIsCapturing(true);
-      console.log('Set isCapturing to true');
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: 640,
-          height: 480,
-          facingMode: "user"
-        }
+        video: { width: 640, height: 480, facingMode: "user" }
       });
-      console.log('Camera stream obtained:', stream);
       streamRef.current = stream;
-
-      // Wait for next render cycle
-      setTimeout(() => {
-        if (videoRef.current && streamRef.current) {
-          videoRef.current.srcObject = streamRef.current;
-          videoRef.current.play().then(() => {
-            console.log('Video playing successfully');
-            getUserLocation().catch(err => console.log('Initial location request:', err.message));
-          }).catch((playError) => {
-            console.log('Video play error:', playError);
-          });
-        } else {
-          console.log('videoRef or stream not available after timeout');
-        }
-      }, 100);
-
+      // srcObject is attached by the useEffect above once the <video> mounts
     } catch (error) {
       console.error('Error accessing camera:', error);
       setIsCapturing(false);
@@ -247,24 +236,29 @@ export default function EmployeeDashboard() {
   };
 
   const captureImage = () => {
-    if (videoRef.current && canvasRef.current) {
-      const canvas = canvasRef.current;
-      const video = videoRef.current;
-      const context = canvas.getContext('2d');
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
 
-      if (context) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        context.drawImage(video, 0, 0);
+    // Guard: video must have actual frames before we capture
+    if (video.readyState < 2 || video.videoWidth === 0) {
+      setFaceError("Camera is starting up — please wait a moment and try again.");
+      return;
+    }
 
-        const imageData = canvas.toDataURL('image/jpeg', 0.8);
-        setCapturedImage(imageData);
+    const context = canvas.getContext('2d');
+    if (context) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      context.drawImage(video, 0, 0);
 
-        // Stop camera
-        const stream = video.srcObject as MediaStream;
-        stream?.getTracks().forEach(track => track.stop());
-        setIsCapturing(false);
-      }
+      const imageData = canvas.toDataURL('image/jpeg', 0.8);
+      setCapturedImage(imageData);
+
+      // Stop camera
+      const stream = video.srcObject as MediaStream;
+      stream?.getTracks().forEach(track => track.stop());
+      setIsCapturing(false);
     }
   };
 
@@ -450,7 +444,7 @@ export default function EmployeeDashboard() {
                           <div className="text-center text-green-600 mb-2">
                             Camera is active
                           </div>
-                          <div className="flex justify-center">
+                          <div className="flex justify-center relative">
                             <video
                               ref={videoRef}
                               autoPlay
@@ -458,18 +452,29 @@ export default function EmployeeDashboard() {
                               muted
                               width="300"
                               height="225"
+                              onLoadedMetadata={() => setVideoReady(true)}
                               style={{
                                 backgroundColor: '#000',
                                 display: 'block'
                               }}
                               className="rounded-lg border-2 border-green-300"
                             />
+                            {!videoReady && (
+                              <div className="absolute inset-0 flex items-center justify-center bg-black/70 rounded-lg">
+                                <div className="text-white text-sm text-center space-y-1">
+                                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mx-auto" />
+                                  <span>Starting camera…</span>
+                                </div>
+                              </div>
+                            )}
                           </div>
                           <div className="text-center text-sm text-gray-600">
-                            Position your face in the camera view and click capture when ready
+                            {videoReady
+                              ? 'Position your face in the camera view and click capture when ready'
+                              : 'Waiting for camera feed…'}
                           </div>
-                          <Button onClick={captureImage} className="w-full">
-                            Capture Face
+                          <Button onClick={captureImage} className="w-full" disabled={!videoReady}>
+                            {videoReady ? 'Capture Face' : 'Camera starting…'}
                           </Button>
                         </div>
                       )}
