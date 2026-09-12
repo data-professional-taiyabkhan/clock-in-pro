@@ -31,10 +31,10 @@ export default function EmployeeDashboard() {
   const [faceError, setFaceError] = useState<string>("");
   const [isExtractingDescriptor, setIsExtractingDescriptor] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -86,14 +86,15 @@ export default function EmployeeDashboard() {
     });
   };
 
-  // Attach stream once the <video> element is in the DOM (isCapturing = true means it just mounted)
+  // Attach stream to video element once both are ready.
+  // cameraStream changing (stream arrived) or isCapturing changing (video element mounted)
+  // will both trigger this, so we always win the race.
   useEffect(() => {
     const v = videoRef.current;
-    const s = streamRef.current;
-    if (!v || !s) return;
-    if (v.srcObject !== s) v.srcObject = s;
+    if (!v || !cameraStream) return;
+    if (v.srcObject !== cameraStream) v.srcObject = cameraStream;
     v.play().catch(() => {});
-  }, [isCapturing]);
+  }, [cameraStream, isCapturing]);
 
   // Face verification mutation
   const verifyFaceMutation = useMutation({
@@ -215,15 +216,14 @@ export default function EmployeeDashboard() {
 
   const startCamera = async () => {
     try {
-      console.log('Starting camera...');
       setVideoReady(false);
+      setCameraStream(null);
       setIsCapturing(true);
 
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, facingMode: "user" }
       });
-      streamRef.current = stream;
-      // srcObject is attached by the useEffect above once the <video> mounts
+      setCameraStream(stream); // triggers useEffect to attach to <video>
     } catch (error) {
       console.error('Error accessing camera:', error);
       setIsCapturing(false);
@@ -255,9 +255,9 @@ export default function EmployeeDashboard() {
       const imageData = canvas.toDataURL('image/jpeg', 0.8);
       setCapturedImage(imageData);
 
-      // Stop camera
-      const stream = video.srcObject as MediaStream;
-      stream?.getTracks().forEach(track => track.stop());
+      // Stop camera tracks
+      cameraStream?.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
       setIsCapturing(false);
     }
   };
