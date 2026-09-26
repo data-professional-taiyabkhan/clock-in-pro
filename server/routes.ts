@@ -18,6 +18,13 @@ import { sendInvitationEmail } from "./lib/email";
 // Face recognition & image storage (local implementations)
 import { uploadFaceImage, getSignedFaceImageUrl, downloadFaceImageAsBase64 } from "./lib/face-image-storage";
 import { analyzeFaceQuality } from "./lib/face-recognition";
+import {
+  DESCRIPTOR_LENGTH,
+  euclideanDistance,
+  getFaceMatchThreshold,
+  isFaceDescriptor,
+  parseRegistrationPayload,
+} from "./lib/face-descriptor";
 
 const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
 
@@ -34,21 +41,6 @@ function toSafeUser(user: User) {
 }
 
 // NOTE: Python helpers removed — face recognition uses face-api.js descriptors
-
-// Calculate Euclidean distance between two face embedding vectors
-function calculateEuclideanDistance(embedding1: number[], embedding2: number[]): number {
-  if (embedding1.length !== embedding2.length) {
-    throw new Error('Embedding lengths must match');
-  }
-
-  let sum = 0;
-  for (let i = 0; i < embedding1.length; i++) {
-    const diff = embedding1[i] - embedding2[i];
-    sum += diff * diff;
-  }
-
-  return Math.sqrt(sum);
-}
 
 // Simple distance calculation for location verification
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -296,69 +288,19 @@ export function registerRoutes(app: Express): Server {
         });
 
       } else {
-        // Handle embedding or advanced training data directly
-        let embedding: number[] | null = null;
-        let trainingPayload: any | null = null;
-
-        try {
-          const parsed = JSON.parse(faceData);
-
-          // Advanced training payload: { version, type: 'advanced-training', primaryDescriptor, poseDescriptors[] }
-          if (parsed && typeof parsed === 'object' && parsed.type === 'advanced-training' && Array.isArray(parsed.primaryDescriptor)) {
-            trainingPayload = parsed;
-
-            // Build centroid from primary + pose descriptors when available
-            const descriptors: number[][] = [];
-            if (Array.isArray(parsed.primaryDescriptor)) descriptors.push(parsed.primaryDescriptor);
-            if (Array.isArray(parsed.poseDescriptors)) {
-              for (const pd of parsed.poseDescriptors) {
-                if (pd && Array.isArray(pd.descriptor)) descriptors.push(pd.descriptor);
-              }
-            }
-
-            if (descriptors.length > 0) {
-              const length = descriptors[0].length;
-              const centroid = new Array(length).fill(0);
-              for (const desc of descriptors) {
-                if (Array.isArray(desc) && desc.length === length) {
-                  for (let i = 0; i < length; i++) centroid[i] += desc[i];
-                }
-              }
-              for (let i = 0; i < length; i++) centroid[i] /= descriptors.length;
-              embedding = centroid;
-            }
-          } else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as any).descriptor)) {
-            // Payload from camera-face-capture: { descriptor: number[], imageData: string }
-            const desc = (parsed as any).descriptor as unknown[];
-            const normalized = desc
-              .map((value) => (typeof value === "number" ? value : Number.parseFloat(String(value))))
-              .filter((value) => Number.isFinite(value));
-            if (normalized.length === desc.length && normalized.length > 0) embedding = normalized as number[];
-          } else if (Array.isArray(parsed)) {
-            const normalized = parsed
-              .map((value) => (typeof value === "number" ? value : Number.parseFloat(value)))
-              .filter((value) => Number.isFinite(value));
-            if (normalized.length === parsed.length && normalized.length > 0) embedding = normalized;
-          } else if (parsed && typeof parsed === "object") {
-            // Generic object of numbers -> flatten
-            const numbers: number[] = [];
-            const collectNumbers = (value: unknown) => {
-              if (typeof value === "number" && Number.isFinite(value)) { numbers.push(value); return; }
-              if (Array.isArray(value)) { value.forEach(collectNumbers); return; }
-              if (value && typeof value === "object") { Object.values(value as Record<string, unknown>).forEach(collectNumbers); }
-            };
-            collectNumbers(parsed);
-            if (numbers.length > 0) embedding = numbers;
-          }
-        } catch (error) {
-          console.warn("Failed to parse face embedding/training data", error);
+        // Parse the descriptor payload (advanced-training, { descriptor }, or a bare array).
+        // Every descriptor must be exactly 128 finite numbers; anything else is rejected
+        // so malformed data can never be stored and break clock-in later.
+        const parsedPayload = parseRegistrationPayload(faceData);
+        if (!parsedPayload) {
+          return res.status(400).json({
+            message: `Invalid face data: expected ${DESCRIPTOR_LENGTH}-dimensional face-api.js descriptor(s). Please retry face registration.`
+          });
         }
+        const embedding = parsedPayload.embedding;
+        console.log(`Face registration for ${req.user!.email}: ${parsedPayload.samples} descriptor sample(s) averaged into centroid`);
 
-        if (!embedding) {
-          return res.status(400).json({ message: "Invalid face data provided" });
-        }
-
-        // Save embedding (centroid) and optionally persist full training payload for future upgrades
+        // Store the centroid RAW (un-normalised) — see server/lib/face-descriptor.ts
         updatedUser = await storage.updateUserFaceEmbedding(
           req.user!.id,
           req.user?.faceImageUrl ?? undefined,
@@ -852,15 +794,15 @@ export function registerRoutes(app: Express): Server {
         // Step 3: Face Recognition — descriptor match is the ONLY path
         console.log(`Starting descriptor-based face match for ${req.user!.email}`);
 
-        // Require a descriptor from the client
-        if (!Array.isArray(descriptor)) {
+        // Validate the probe descriptor: exactly 128 finite numbers from face-api.js
+        if (!isFaceDescriptor(descriptor)) {
           await AuditLogger.logFaceVerification(
             req.user!.id,
             req.user!.organizationId!,
             false,
             {
               deviceInfo,
-              failureReason: "No descriptor provided by client",
+              failureReason: `Malformed or missing descriptor from client (length ${Array.isArray(descriptor) ? descriptor.length : "n/a"})`,
               metadata: { action }
             }
           );
@@ -872,15 +814,33 @@ export function registerRoutes(app: Express): Server {
           });
         }
 
-        // Normalize embeddings then compute Euclidean distance
-        const normalize = (v: number[]) => {
-          const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
-          return v.map(x => x / norm);
-        };
-        const reg = normalize(req.user!.faceEmbedding as number[]);
-        const probe = normalize(descriptor as number[]);
-        const dist = calculateEuclideanDistance(reg, probe);
-        const threshold = 0.6;
+        // Validate the stored embedding. Rows written by older builds may hold
+        // non-descriptor data; tell the user to re-register instead of throwing a 500.
+        const storedEmbedding = req.user!.faceEmbedding;
+        if (!isFaceDescriptor(storedEmbedding)) {
+          await AuditLogger.logFaceVerification(
+            req.user!.id,
+            req.user!.organizationId!,
+            false,
+            {
+              deviceInfo,
+              failureReason: "Stored face embedding is not a valid 128-d descriptor — user must re-register",
+              metadata: { action }
+            }
+          );
+
+          return res.status(400).json({
+            verified: false,
+            message: "Your stored face data is invalid or from an older version. Please re-register your face in Settings → Clock-In Settings, or use your PIN.",
+            canUsePin: req.user!.pinEnabled
+          });
+        }
+
+        // Compare RAW descriptors with plain Euclidean distance. face-api.js's
+        // standard 0.6 threshold applies to raw vectors — do not L2-normalise
+        // first (that shrinks distances ≈30% and lets different people through).
+        const dist = euclideanDistance(storedEmbedding, descriptor);
+        const threshold = getFaceMatchThreshold();
         const isMatch = dist <= threshold;
 
         console.log(`Descriptor match: distance=${dist.toFixed(4)} threshold=${threshold} → ${isMatch ? 'PASS' : 'FAIL'}`);

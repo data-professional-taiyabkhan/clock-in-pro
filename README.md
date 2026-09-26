@@ -22,7 +22,7 @@ Clock-In Pro lets employees clock in and out by looking at their webcam. The sys
 | **Routing** | Wouter |
 | **Billing** | Stripe (Checkout, Customer Portal, Webhooks) |
 | **Face Detection** | face-api.js (browser-side) |
-| **Face Matching** | Cosine similarity (server-side, threshold 0.80) |
+| **Face Matching** | Euclidean distance on raw face-api.js descriptors (server-side, threshold 0.6) |
 | **Deployment** | Railway (Nixpacks) |
 
 ---
@@ -31,26 +31,29 @@ Clock-In Pro lets employees clock in and out by looking at their webcam. The sys
 
 There is **no cloud face-recognition API** involved. No AWS Rekognition, no Azure Face, no per-match cost.
 
-### Registration
-1. The employee opens the face-registration page in their browser.
-2. **face-api.js** (running entirely in the browser via `client/public/models/`) detects the face and extracts a 128-dimensional descriptor (embedding).
-3. The embedding is sent to the server along with a base64-encoded snapshot of the face image.
-4. The server L2-normalises the embedding and stores it in the `users.faceEmbedding` column. The face image is stored as a base64 data URI in `users.faceImageUrl`.
+### Registration (Settings → Clock-In Settings → Set up face verification)
+1. The employee grants biometric consent, then opens the face-training flow (`client/src/components/advanced-face-training.tsx`).
+2. **face-api.js** (running entirely in the browser; model weights are served from `client/public/models/`) detects the face and extracts a 128-dimensional descriptor for three poses: centre, turned left, turned right. Detections run one at a time, so the loop never piles up on slow phones.
+3. The three descriptors are posted to `POST /api/register-face`. The server accepts **only** well-formed descriptors (exactly 128 finite numbers each) — anything else is rejected with a 400 so malformed data can never be stored.
+4. The server averages the poses into one centroid and stores it **raw (un-normalised)** in `users.faceEmbedding`. This flow stores no face image.
 
 ### Clock-In / Clock-Out
-1. The employee's browser captures a webcam frame and runs face-api.js to extract a probe embedding.
-2. The probe embedding is sent to the server.
-3. The server loads the registered embedding from the database, L2-normalises both vectors, and computes the **Euclidean distance** between them (equivalent to cosine distance on normalised vectors).
-4. If the distance is within the configured threshold (≤ 0.25 for acceptance, with confidence tiers at 0.15 / 0.20 / 0.25), the match is accepted.
-5. The server also validates GPS coordinates against the assigned geofence before recording the attendance event.
+1. The dashboard captures a webcam frame, runs face-api.js locally to extract a probe descriptor, and posts it to `POST /api/verify-face` together with the frame and GPS position.
+2. The server computes the plain **Euclidean distance between the raw stored centroid and the raw probe descriptor**.
+3. The match is accepted when the distance is ≤ `FACE_MATCH_THRESHOLD` (default **0.6**, face-api.js's standard threshold). Measured with the shipped models: same person 0.3–0.5, different people 0.75–0.9.
+4. Geofencing (if the employee has assigned locations) and audit logging apply as before.
+
+> **Do not L2-normalise descriptors before comparing.** face-api.js descriptors have a norm of ≈1.4, so normalising shrinks every distance by ≈30% and the 0.6 threshold then accepts different people. The helpers live in one place, [`server/lib/face-descriptor.ts`](server/lib/face-descriptor.ts), so this cannot drift again.
+
+### What it does not do (yet)
+- **No liveness / anti-spoofing.** `performLivenessDetection` in `server/routes.ts` is a stub that always passes; a printed photo held to the camera will match. Use PIN clock-in where that matters.
+- **No fallback matching.** If face-api.js cannot detect a face, registration and verification fail cleanly. There is no colour-histogram or "basic" descriptor path.
 
 ### Why this approach?
 - **Zero per-match cost** — all computation is local.
 - **Privacy** — face data never leaves your infrastructure.
 - **Simplicity** — no cloud credentials to manage for face matching.
-- **Speed** — browser-side detection is near-instant; server comparison is a single dot-product.
-
-> **Implementation:** see [`server/lib/faceCompare.ts`](server/lib/faceCompare.ts) for the matching logic.
+- **Speed** — browser-side detection is near-instant; server comparison is a single 128-element loop.
 
 ---
 
@@ -92,6 +95,9 @@ STRIPE_PRICE_ID_ANNUAL=price_...
 # Transactional email (required for invitations — Task 2)
 RESEND_API_KEY=re_...
 RESEND_FROM_EMAIL=noreply@yourdomain.com
+
+# Face matching (optional — max descriptor distance to accept, default 0.6)
+FACE_MATCH_THRESHOLD=0.6
 ```
 
 ### 3. Push the database schema
@@ -213,7 +219,7 @@ See [`STAGING_SETUP.md`](STAGING_SETUP.md) for full staging environment setup in
 │   ├── routes.ts            # Main API routes
 │   ├── storage.ts           # Database access layer
 │   ├── lib/
-│   │   └── faceCompare.ts   # Face embedding comparison
+│   │   └── face-descriptor.ts # Descriptor validation, centroid, distance, threshold
 │   ├── middleware/
 │   │   └── entitlement.ts   # Trial / subscription gating
 │   └── routes/
