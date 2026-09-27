@@ -1,18 +1,20 @@
-import { ReactNode } from "react"
-import { useState, useRef, useEffect } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent } from "@/components/ui/card";
 import { Camera, CheckCircle, RotateCcw, RotateCw } from "lucide-react";
-import * as faceapi from 'face-api.js';
+import * as faceapi from "face-api.js";
 
 interface AdvancedFaceTrainingProps {
+  /** Receives the JSON training payload for POST /api/register-face. */
   onComplete: (trainingData: string) => void;
   onCancel: () => void;
 }
 
+type PoseId = "center" | "left" | "right";
+
 type TrainingStep = {
-  id: string;
+  id: PoseId;
   name: string;
   instruction: string;
   icon: ReactNode;
@@ -20,429 +22,424 @@ type TrainingStep = {
   descriptor?: number[];
 };
 
+const MODEL_URL = "/models";
+const DESCRIPTOR_LENGTH = 128;
+/** Pause AFTER a detection finishes before starting the next one — detections never overlap. */
+const DETECTION_PAUSE_MS = 150;
+/** Reuse the loop's most recent descriptor at capture time if it is at least this fresh. */
+const DESCRIPTOR_FRESHNESS_MS = 1500;
+const COUNTDOWN_SECONDS = 2;
+const COUNTDOWN_TICK_MS = 800;
+const NO_FACE_HINT_AFTER_MS = 10_000;
+
+const POSE_HINTS: Record<PoseId, string> = {
+  center: "Look straight at the camera and keep your head level",
+  left: "Turn your head a little further to your left",
+  right: "Turn your head a little further to your right",
+};
+
+const INITIAL_STEPS: TrainingStep[] = [
+  {
+    id: "center",
+    name: "Center Position",
+    instruction: "Look directly at the camera with your face centered",
+    icon: <Camera className="w-5 h-5" />,
+    completed: false,
+  },
+  {
+    id: "left",
+    name: "Turn Left",
+    instruction: "Slowly turn your head to the left (your left)",
+    icon: <RotateCcw className="w-5 h-5" />,
+    completed: false,
+  },
+  {
+    id: "right",
+    name: "Turn Right",
+    instruction: "Slowly turn your head to the right (your right)",
+    icon: <RotateCw className="w-5 h-5" />,
+    completed: false,
+  },
+];
+
+const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
+
+function detectFaces(input: HTMLVideoElement) {
+  return faceapi.detectAllFaces(input, detectorOptions()).withFaceLandmarks().withFaceDescriptors();
+}
+type Detection = Awaited<ReturnType<typeof detectFaces>>[number];
+
+const bestOf = (detections: Detection[]) =>
+  detections.reduce((prev, cur) => (cur.detection.score > prev.detection.score ? cur : prev));
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Pose check on face-api landmarks.
+ *
+ * The camera frame itself is NOT mirrored — only the on-screen preview is
+ * flipped with CSS. In an un-mirrored frame the user's left side is on the
+ * RIGHT of the image, so when they turn to THEIR left the nose tip moves to a
+ * larger x than the midpoint between the eyes.
+ */
+function isPoseCorrect(detection: Detection, pose: PoseId): boolean {
+  const landmarks = detection.landmarks;
+  const box = detection.detection.box;
+  const nose = landmarks.getNose()[3]; // nose tip
+  const leftEye = landmarks.getLeftEye()[0]; // outer corner of the frame-left eye
+  const rightEye = landmarks.getRightEye()[3]; // outer corner of the frame-right eye
+  const eyeCenterX = (leftEye.x + rightEye.x) / 2;
+  const noseOffset = nose.x - eyeCenterX; // > 0 → user turned to their left
+
+  switch (pose) {
+    case "center":
+      return Math.abs(noseOffset) < box.width * 0.1 && Math.abs(leftEye.y - rightEye.y) < box.height * 0.08;
+    case "left":
+      return noseOffset > box.width * 0.15;
+    case "right":
+      return -noseOffset > box.width * 0.15;
+  }
+}
+
 export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrainingProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
+
   const [modelsLoaded, setModelsLoaded] = useState(false);
-  const [modelError, setModelError] = useState<string | null>(null);
-  const [cameraReady, setCameraReady] = useState(false);
-  const [videoStreaming, setVideoStreaming] = useState(false);
+  const [fatalError, setFatalError] = useState<string | null>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [videoReady, setVideoReady] = useState(false);
+
+  const [steps, setSteps] = useState<TrainingStep[]>(INITIAL_STEPS);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [isCapturing, setIsCapturing] = useState(false);
-  const [faceDetected, setFaceDetected] = useState(false);
   const [countdown, setCountdown] = useState(0);
-  const [noFaceSeconds, setNoFaceSeconds] = useState(0);
-  const lastLogTime = useRef(0);
-  const [poseValidation, setPoseValidation] = useState<{
-    isCorrectPose: boolean;
-    confidence: number;
-    message: string;
-  }>({ isCorrectPose: false, confidence: 0, message: 'Position your face as instructed' });
-  
-  const [trainingSteps, setTrainingSteps] = useState<TrainingStep[]>([
-    {
-      id: 'center',
-      name: 'Center Position',
-      instruction: 'Look directly at the camera with your face centered',
-      icon: <Camera className="w-5 h-5" />,
-      completed: false
-    },
-    {
-      id: 'left',
-      name: 'Turn Left',
-      instruction: 'Slowly turn your head to the left (your left)',
-      icon: <RotateCcw className="w-5 h-5" />,
-      completed: false
-    },
-    {
-      id: 'right',
-      name: 'Turn Right',
-      instruction: 'Slowly turn your head to the right (your right)',
-      icon: <RotateCw className="w-5 h-5" />,
-      completed: false
-    }
-  ]);
+  const [faceDetected, setFaceDetected] = useState(false);
+  const [poseOk, setPoseOk] = useState(false);
+  const [detectionScore, setDetectionScore] = useState(0);
+  const [statusMessage, setStatusMessage] = useState("Position your face as instructed");
+  const [showNoFaceHint, setShowNoFaceHint] = useState(false);
 
-  const currentStep = trainingSteps[currentStepIndex];
-  const progress = (trainingSteps.filter(step => step.completed).length / trainingSteps.length) * 100;
+  // Refs mirror the state that the async detection loop and timers need, so
+  // those callbacks never act on stale values captured by an old render.
+  const stepsRef = useRef<TrainingStep[]>(INITIAL_STEPS);
+  const stepIndexRef = useRef(0);
+  const capturingRef = useRef(false);
+  const completedRef = useRef(false);
+  const lastDescriptorRef = useRef<{ descriptor: number[]; at: number } | null>(null);
+  const lastFaceSeenAtRef = useRef(Date.now());
+  const lastLogAtRef = useRef(0);
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const currentStep = steps[Math.min(currentStepIndex, steps.length - 1)];
+  const allDone = steps.every((s) => s.completed);
+  const progress = (steps.filter((s) => s.completed).length / steps.length) * 100;
+  const ready = modelsLoaded && videoReady && !fatalError;
+
+  // 1. Load the face-api.js models once.
   useEffect(() => {
-    const loadModels = async () => {
-      try {
-        await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
-          faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
-          faceapi.nets.faceRecognitionNet.loadFromUri('/models'),
-        ]);
-        setModelsLoaded(true);
-      } catch (error) {
-        console.error('Failed to load face-api models:', error);
-        setModelError("Face detection couldn't start (models failed to load). Check your connection and refresh.");
-      }
+    let cancelled = false;
+    Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+    ])
+      .then(() => {
+        if (!cancelled) setModelsLoaded(true);
+      })
+      .catch((error) => {
+        console.error("Failed to load face-api models:", error);
+        if (!cancelled) {
+          setFatalError("Face detection couldn't start (models failed to load). Check your connection and refresh.");
+        }
+      });
+    return () => {
+      cancelled = true;
     };
-
-    loadModels();
   }, []);
 
+  // 2. Request the camera. Tracks are stopped from the local variable on unmount.
   useEffect(() => {
-    // Camera: request stream; do NOT touch videoRef here — the video element
-    // may not exist yet (render is gated). srcObject is set in a dedicated effect below.
+    let cancelled = false;
     let localStream: MediaStream | null = null;
-
-    const startCamera = async () => {
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            facingMode: 'user'
-          }
-        });
-        setStream(localStream);
-        setCameraReady(true);
-      } catch (error) {
-        console.error('Error accessing camera:', error);
-        setModelError('Camera access denied. Please allow camera permission and refresh.');
-      }
-    };
-
-    startCamera();
-
-    // Cleanup: stop tracks from the LOCAL variable, not from state
-    // (state is captured as null at mount due to the closure)
+    navigator.mediaDevices
+      .getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } })
+      .then((mediaStream) => {
+        if (cancelled) {
+          mediaStream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        localStream = mediaStream;
+        setStream(mediaStream);
+      })
+      .catch((error) => {
+        console.error("Error accessing camera:", error);
+        if (!cancelled) setFatalError("Camera access denied. Please allow camera permission and refresh.");
+      });
     return () => {
-      localStream?.getTracks().forEach(t => t.stop());
+      cancelled = true;
+      localStream?.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
-  // Dedicated effect: attach stream to the video element once BOTH exist.
-  // Runs whenever stream or the render gates change — fires after the <video>
-  // mounts, regardless of which happened first.
+  // 3. Attach the stream. The <video> element is always mounted, so there is no
+  //    race between the stream arriving and the element existing.
   useEffect(() => {
-    const v = videoRef.current;
-    if (!v || !stream) return;
-    if (v.srcObject !== stream) v.srcObject = stream;
-    v.play().catch(() => { /* autoplay retry on user gesture */ });
-  }, [stream, modelsLoaded, cameraReady, modelError]);
+    const video = videoRef.current;
+    if (!video || !stream) return;
+    if (video.srcObject !== stream) video.srcObject = stream;
+    video.play().catch(() => {
+      /* playsInline + muted normally allows autoplay; a user gesture retries */
+    });
+  }, [stream]);
 
-
+  // 4. Detection loop: exactly one detection in flight at a time. Starts as soon as
+  //    BOTH the models and the video are ready, in whichever order that happens.
   useEffect(() => {
-    if (!modelsLoaded || !videoRef.current) return;
+    if (!ready) return;
+    let active = true;
 
-    const detectFace = async () => {
-      const v = videoRef.current;
-      // Guard: video must have frames before we run face-api
-      if (!v || v.readyState < 2 || v.videoWidth === 0) return;
-
-      if (!videoStreaming) {
-        console.log('[face-training] detection started', v.videoWidth, 'x', v.videoHeight);
-        setVideoStreaming(true);
-      }
-
-      try {
-        const detections = await faceapi.detectAllFaces(
-          v,
-          new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
-        ).withFaceLandmarks().withFaceDescriptors();
-
-        const hasValidFace = detections.length > 0;
-        setFaceDetected(hasValidFace);
-        if (hasValidFace) setNoFaceSeconds(0);
-
-        // Throttled diagnostic log (max once per second)
-        const now = Date.now();
-        if (now - lastLogTime.current > 1000) {
-          lastLogTime.current = now;
-          const posOk = hasValidFace ? isFaceInCorrectPosition(detections[0], currentStep.id) : null;
-          console.log('[face-training]', {
-            step: currentStep.id,
-            detections: detections.length,
-            score: detections[0]?.detection.score?.toFixed(2),
-            positionOk: posOk
-          });
-        }
-
-        if (!hasValidFace) {
-          setPoseValidation({
-            isCorrectPose: false,
-            confidence: 0,
-            message: 'No face detected — move into the light and centre your face'
-          });
-        } else if (!isCapturing && !currentStep.completed) {
-          const positionOk = isFaceInCorrectPosition(detections[0], currentStep.id);
-          if (positionOk) {
-            setPoseValidation({
-              isCorrectPose: true,
-              confidence: detections[0].detection.score,
-              message: 'Hold still…'
-            });
-            startCountdown();
-          } else {
-            setPoseValidation({
-              isCorrectPose: false,
-              confidence: detections[0].detection.score,
-              message: 'Face detected — hold still and follow the instruction'
-            });
+    const run = async () => {
+      console.log("[face-training] detection loop started");
+      while (active) {
+        const video = videoRef.current;
+        if (video && video.readyState >= 2 && video.videoWidth > 0 && !document.hidden) {
+          try {
+            const detections = await detectFaces(video);
+            if (!active) return;
+            handleDetections(detections);
+          } catch (error) {
+            console.error("[face-training] detection failed", error);
           }
         }
-      } catch (error) {
-        console.error('[face-training] detectAllFaces threw', error);
-        // Fallback to basic face detection
-        const hasBasicFace = analyzeVideoForFace();
-        setFaceDetected(hasBasicFace);
-        if (hasBasicFace) setNoFaceSeconds(0);
-
-        if (hasBasicFace && !isCapturing && !currentStep.completed) {
-          const poseCheck = validatePoseForStep(currentStep.id);
-          setPoseValidation(poseCheck);
-
-          if (poseCheck.isCorrectPose && poseCheck.confidence > 0.7) {
-            startCountdown();
-          }
-        } else {
-          setPoseValidation({
-            isCorrectPose: false,
-            confidence: 0,
-            message: hasBasicFace ? 'Adjust your pose as instructed' : 'Face not detected'
-          });
-        }
+        await sleep(DETECTION_PAUSE_MS);
       }
     };
 
-    const interval = setInterval(detectFace, 200);
-
-    // Increment no-face counter every second; resets happen inside detectFace
-    const noFaceInterval = setInterval(() => {
-      setNoFaceSeconds(prev => prev + 1);
-    }, 1000);
-
+    void run();
     return () => {
-      clearInterval(interval);
-      clearInterval(noFaceInterval);
+      active = false;
     };
-  }, [modelsLoaded, currentStepIndex, isCapturing]);
+    // handleDetections only touches refs and state setters, so it is safe to omit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
 
-  const isFaceInCorrectPosition = (detection: any, stepId: string): boolean => {
-    const landmarks = detection.landmarks;
-    const box = detection.detection.box;
-    
-    // Get key facial landmarks
-    const nose = landmarks.getNose()[3]; // Nose tip
-    const leftEye = landmarks.getLeftEye()[0];
-    const rightEye = landmarks.getRightEye()[3];
-    const mouth = landmarks.getMouth()[3];
-    
-    // Calculate face center and angles
-    const eyeCenter = { x: (leftEye.x + rightEye.x) / 2, y: (leftEye.y + rightEye.y) / 2 };
-    const faceWidth = box.width;
-    const faceHeight = box.height;
+  // 5. Clear timers on unmount.
+  useEffect(() => {
+    return () => {
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+      if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+    };
+  }, []);
 
-    switch (stepId) {
-      case 'center':
-        // Face should be centered and upright
-        const horizontalCenter = Math.abs(nose.x - eyeCenter.x) < faceWidth * 0.1;
-        const verticalAlignment = Math.abs(leftEye.y - rightEye.y) < faceHeight * 0.05;
-        return horizontalCenter && verticalAlignment;
-        
-      case 'left':
-        // Head turned left (nose should be to the left of eye center)
-        return (eyeCenter.x - nose.x) > faceWidth * 0.15;
-        
-      case 'right':
-        // Head turned right (nose should be to the right of eye center)  
-        return (nose.x - eyeCenter.x) > faceWidth * 0.15;
-        
-      case 'up':
-        // Head tilted up (nose should be above eye center)
-        return (eyeCenter.y - nose.y) > faceHeight * 0.1;
-        
-      case 'down':
-        // Head tilted down (nose should be below eye center)
-        return (nose.y - eyeCenter.y) > faceHeight * 0.1;
-        
-      case 'close':
-        // Face should fill more of the frame
-        return faceWidth > videoRef.current!.videoWidth * 0.4;
-        
-      case 'far':
-        // Face should be smaller in frame
-        return faceWidth < videoRef.current!.videoWidth * 0.25;
-        
-      default:
-        return true;
+  const handleDetections = (detections: Detection[]) => {
+    const now = Date.now();
+    const step = stepsRef.current[stepIndexRef.current];
+
+    if (detections.length === 0) {
+      lastDescriptorRef.current = null;
+      setFaceDetected(false);
+      setPoseOk(false);
+      setDetectionScore(0);
+      setShowNoFaceHint(now - lastFaceSeenAtRef.current > NO_FACE_HINT_AFTER_MS);
+      if (!capturingRef.current) setStatusMessage("No face detected — move into the light and centre your face");
+      return;
     }
-  };
 
-  const startCountdown = () => {
-    if (isCapturing) return;
-    
-    setIsCapturing(true);
-    setCountdown(2); // Faster countdown
-    
-    const countdownInterval = setInterval(() => {
-      setCountdown(prev => {
-        if (prev <= 1) {
-          clearInterval(countdownInterval);
-          captureStep();
-          return 0;
-        }
-        return prev - 1;
+    const best = bestOf(detections);
+    const descriptor = Array.from(best.descriptor);
+    lastFaceSeenAtRef.current = now;
+    if (descriptor.length === DESCRIPTOR_LENGTH) lastDescriptorRef.current = { descriptor, at: now };
+    setFaceDetected(true);
+    setShowNoFaceHint(false);
+    setDetectionScore(best.detection.score);
+
+    if (!step || step.completed || capturingRef.current) return;
+
+    const ok = isPoseCorrect(best, step.id);
+    if (now - lastLogAtRef.current > 1000) {
+      lastLogAtRef.current = now;
+      console.log("[face-training]", {
+        step: step.id,
+        detections: detections.length,
+        score: best.detection.score.toFixed(2),
+        positionOk: ok,
       });
-    }, 800); // Faster countdown
-  };
-
-  const captureStep = async () => {
-    if (!videoRef.current || !canvasRef.current || !modelsLoaded) return;
-
-    try {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const context = canvas.getContext('2d');
-
-      if (!context) return;
-
-      // Standardized capture
-      canvas.width = 640;
-      canvas.height = 480;
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      let descriptor: number[] = [];
-
-      try {
-        // Try face-api.js descriptor first
-        const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }))
-          .withFaceLandmarks()
-          .withFaceDescriptors();
-
-        if (detections.length > 0) {
-          descriptor = Array.from(detections[0].descriptor);
-        }
-      } catch (error) {
-        // Fallback to enhanced image analysis
-        console.log('Using enhanced fallback descriptor for step:', currentStep.id);
-        descriptor = generateEnhancedDescriptor(canvas, context, currentStep.id);
-      }
-
-      if (descriptor.length > 0) {
-        // Update training step
-        setTrainingSteps(prev => prev.map(step => 
-          step.id === currentStep.id 
-            ? { ...step, completed: true, descriptor }
-            : step
-        ));
-
-        // Move to next step or complete training
-        if (currentStepIndex < trainingSteps.length - 1) {
-          setTimeout(() => {
-            setCurrentStepIndex(prev => prev + 1);
-            setIsCapturing(false);
-            setNoFaceSeconds(0);
-            setPoseValidation({ isCorrectPose: false, confidence: 0, message: 'Position your face as instructed' });
-          }, 500); // Faster transition
-        } else {
-          completeTraining();
-        }
-      } else {
-        console.error('Failed to generate descriptor');
-        setIsCapturing(false);
-      }
-    } catch (error) {
-      console.error('Capture failed:', error);
-      setIsCapturing(false);
+    }
+    setPoseOk(ok);
+    if (ok) {
+      setStatusMessage("Hold still…");
+      startCountdown();
+    } else {
+      setStatusMessage(POSE_HINTS[step.id]);
     }
   };
 
-  const completeTraining = () => {
-    // Combine all descriptors into a comprehensive training model
-    const completedSteps = trainingSteps.filter(step => step.completed && step.descriptor);
-    
-    if (completedSteps.length >= 2) {
-      // Create averaged descriptor from all captures
-      const descriptorLength = completedSteps[0].descriptor!.length;
-      const averagedDescriptor = new Array(descriptorLength).fill(0);
-      
-      completedSteps.forEach(step => {
-        step.descriptor!.forEach((val, idx) => {
-          averagedDescriptor[idx] += val / completedSteps.length;
-        });
-      });
-
-      // Create comprehensive training data
-      const trainingData = {
-        version: 2,
-        type: 'advanced-training',
-        primaryDescriptor: averagedDescriptor,
-        poseDescriptors: completedSteps.map(step => ({
-          pose: step.id,
-          descriptor: step.descriptor,
-          timestamp: Date.now()
-        })),
-        trainingComplete: true,
-        quality: completedSteps.length / trainingSteps.length
-      };
-
-      onComplete(JSON.stringify(trainingData));
-    }
-  };
-
-  const resetStep = () => {
-    setTrainingSteps(prev => prev.map(step => 
-      step.id === currentStep.id 
-        ? { ...step, completed: false, descriptor: undefined }
-        : step
-    ));
+  const finishCapture = () => {
+    capturingRef.current = false;
     setIsCapturing(false);
     setCountdown(0);
   };
 
-  if (!modelsLoaded) {
+  const startCountdown = () => {
+    if (capturingRef.current || completedRef.current) return;
+    capturingRef.current = true;
+    setIsCapturing(true);
+    setCountdown(COUNTDOWN_SECONDS);
+
+    let remaining = COUNTDOWN_SECONDS;
+    countdownTimerRef.current = setInterval(() => {
+      remaining -= 1;
+      if (remaining > 0) {
+        setCountdown(remaining);
+        return;
+      }
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+      setCountdown(0);
+      void captureStep();
+    }, COUNTDOWN_TICK_MS);
+  };
+
+  const captureStep = async () => {
+    const stepIndex = stepIndexRef.current;
+    const step = stepsRef.current[stepIndex];
+    if (!step || step.completed) {
+      finishCapture();
+      return;
+    }
+
+    try {
+      // Prefer the descriptor the loop just computed; otherwise run one detection now.
+      let descriptor: number[] | null = null;
+      const recent = lastDescriptorRef.current;
+      if (recent && Date.now() - recent.at <= DESCRIPTOR_FRESHNESS_MS) {
+        descriptor = recent.descriptor;
+      } else if (videoRef.current) {
+        const detections = await detectFaces(videoRef.current);
+        if (detections.length > 0) descriptor = Array.from(bestOf(detections).descriptor);
+      }
+
+      if (!descriptor || descriptor.length !== DESCRIPTOR_LENGTH) {
+        setStatusMessage("Couldn't capture your face — keep it in view and try again");
+        finishCapture();
+        return;
+      }
+
+      const updated = stepsRef.current.map((s, i) => (i === stepIndex ? { ...s, completed: true, descriptor } : s));
+      stepsRef.current = updated;
+      setSteps(updated);
+
+      if (stepIndex < updated.length - 1) {
+        advanceTimerRef.current = setTimeout(() => {
+          advanceTimerRef.current = null;
+          stepIndexRef.current = stepIndex + 1;
+          setCurrentStepIndex(stepIndex + 1);
+          lastFaceSeenAtRef.current = Date.now();
+          setPoseOk(false);
+          setStatusMessage("Position your face as instructed");
+          finishCapture();
+        }, 500);
+      } else {
+        completeTraining(updated);
+      }
+    } catch (error) {
+      console.error("[face-training] capture failed", error);
+      setStatusMessage("Capture failed — please try again");
+      finishCapture();
+    }
+  };
+
+  const completeTraining = (finalSteps: TrainingStep[]) => {
+    if (completedRef.current) return;
+    const completed = finalSteps.filter((s) => s.completed && s.descriptor?.length === DESCRIPTOR_LENGTH);
+    if (completed.length < 2) {
+      setStatusMessage("Not enough good captures — please start again");
+      finishCapture();
+      return;
+    }
+    completedRef.current = true;
+
+    const averaged = new Array<number>(DESCRIPTOR_LENGTH).fill(0);
+    for (const s of completed) {
+      s.descriptor!.forEach((value, i) => {
+        averaged[i] += value / completed.length;
+      });
+    }
+
+    const trainingData = {
+      version: 2,
+      type: "advanced-training",
+      primaryDescriptor: averaged,
+      poseDescriptors: completed.map((s) => ({ pose: s.id, descriptor: s.descriptor, timestamp: Date.now() })),
+      trainingComplete: true,
+      quality: completed.length / finalSteps.length,
+    };
+
+    setStatusMessage("All poses captured");
+    onComplete(JSON.stringify(trainingData));
+  };
+
+  const cancelTimers = () => {
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+    countdownTimerRef.current = null;
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+    advanceTimerRef.current = null;
+  };
+
+  const resetStep = () => {
+    cancelTimers();
+    const idx = stepIndexRef.current;
+    const updated = stepsRef.current.map((s, i) => (i === idx ? { ...s, completed: false, descriptor: undefined } : s));
+    stepsRef.current = updated;
+    setSteps(updated);
+    setPoseOk(false);
+    setStatusMessage("Position your face as instructed");
+    finishCapture();
+  };
+
+  const startOver = () => {
+    cancelTimers();
+    completedRef.current = false;
+    stepsRef.current = INITIAL_STEPS;
+    stepIndexRef.current = 0;
+    setSteps(INITIAL_STEPS);
+    setCurrentStepIndex(0);
+    setPoseOk(false);
+    setStatusMessage("Position your face as instructed");
+    lastFaceSeenAtRef.current = Date.now();
+    finishCapture();
+  };
+
+  if (fatalError) {
     return (
-      <Card className="w-full max-w-md mx-auto">
+      <Card className="w-full max-w-2xl mx-auto">
         <CardContent className="pt-6">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p>Loading face recognition models...</p>
+          <div className="text-center text-destructive space-y-2">
+            <Camera className="w-12 h-12 mx-auto opacity-60" />
+            <p className="font-medium">{fatalError}</p>
+            <div className="flex justify-center gap-2">
+              <Button variant="outline" onClick={() => window.location.reload()}>
+                Refresh Page
+              </Button>
+              <Button variant="ghost" onClick={onCancel}>
+                Cancel
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
     );
   }
 
+  const loadingLabel = !stream
+    ? "Waiting for camera permission…"
+    : !modelsLoaded
+      ? "Loading face models…"
+      : "Starting camera…";
+
   return (
     <div className="w-full max-w-2xl mx-auto space-y-6">
-      {/* Error State */}
-      {modelError && (
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-center text-destructive space-y-2">
-              <Camera className="w-12 h-12 mx-auto opacity-60" />
-              <p className="font-medium">{modelError}</p>
-              <Button variant="outline" onClick={() => window.location.reload()}>
-                Refresh Page
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Loading States */}
-      {!modelError && (!modelsLoaded || !cameraReady) && (
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-center space-y-3">
-              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary mx-auto" />
-              <p className="text-muted-foreground">
-                {!cameraReady ? 'Waiting for camera permission…' : 'Loading face models…'}
-              </p>
-              <p className="text-xs text-muted-foreground">This may take 10–30 seconds on mobile data.</p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {modelError ? null : (!modelsLoaded || !cameraReady) ? null : (
-      <>
       {/* Progress */}
       <div className="space-y-2">
         <div className="flex justify-between text-sm">
@@ -463,45 +460,46 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
             <p className="text-muted-foreground">{currentStep.instruction}</p>
           </div>
 
-          {/* Camera Feed */}
+          {/* Camera feed — always mounted so the stream can attach as soon as it exists */}
           <div className="relative w-full max-w-md mx-auto mb-4">
             <video
               ref={videoRef}
               autoPlay
               playsInline
               muted
-              onLoadedMetadata={() => setVideoStreaming(true)}
-              className="w-full rounded-lg border"
-              style={{ transform: 'scaleX(-1)' }}
+              onLoadedMetadata={() => setVideoReady(true)}
+              className="w-full min-h-[200px] rounded-lg border bg-black"
+              style={{ transform: "scaleX(-1)" }}
             />
 
-            {/* Starting camera overlay — shown while stream attached but no frames yet */}
-            {stream && !videoStreaming && (
+            {!ready && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-lg">
                 <div className="text-white text-sm font-medium text-center space-y-2">
                   <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white mx-auto" />
-                  <span>Starting camera…</span>
-                </div>
-              </div>
-            )}
-            
-            {/* Face Detection Overlay */}
-            {faceDetected && (
-              <div className="absolute inset-4 border-2 border-green-500 rounded-lg">
-                <div className="absolute -top-6 left-0 bg-green-500 text-white text-xs px-2 py-1 rounded">
-                  Face Detected
+                  <span>{loadingLabel}</span>
+                  <p className="text-xs opacity-80">This may take 10–30 seconds on mobile data.</p>
                 </div>
               </div>
             )}
 
-            {/* Countdown Overlay */}
+            {ready && faceDetected && !currentStep.completed && (
+              <div className={`absolute inset-4 border-2 rounded-lg ${poseOk ? "border-green-500" : "border-amber-400"}`}>
+                <div
+                  className={`absolute -top-6 left-0 text-white text-xs px-2 py-1 rounded ${
+                    poseOk ? "bg-green-500" : "bg-amber-500"
+                  }`}
+                >
+                  {poseOk ? "Pose OK" : "Face Detected"}
+                </div>
+              </div>
+            )}
+
             {countdown > 0 && (
               <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
                 <div className="text-white text-6xl font-bold">{countdown}</div>
               </div>
             )}
 
-            {/* Step Completed Overlay */}
             {currentStep.completed && (
               <div className="absolute inset-0 bg-green-500 bg-opacity-80 flex items-center justify-center rounded-lg">
                 <CheckCircle className="w-16 h-16 text-white" />
@@ -511,72 +509,51 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
 
           {/* Status */}
           <div className="text-center space-y-2">
-            {!currentStep.completed && (
+            {allDone ? (
+              <p className="text-green-600 font-semibold">✓ All poses captured — saving your face profile…</p>
+            ) : currentStep.completed ? (
+              <p className="text-green-600 font-semibold">✓ Step completed!</p>
+            ) : (
               <div className="space-y-2">
-                <div className={`text-sm font-medium ${
-                  poseValidation.isCorrectPose ? 'text-green-600' : 'text-amber-600'
-                }`}>
-                  {poseValidation.message}
+                <div className={`text-sm font-medium ${poseOk ? "text-green-600" : "text-amber-600"}`}>
+                  {ready ? statusMessage : "Getting ready…"}
                 </div>
-                {poseValidation.confidence > 0 && (
+                {detectionScore > 0 && (
                   <div className="w-full bg-muted rounded-full h-2">
-                    <div 
+                    <div
                       className={`h-2 rounded-full transition-all duration-300 ${
-                        poseValidation.confidence > 0.7 ? 'bg-green-500' : 'bg-amber-500'
+                        detectionScore > 0.7 ? "bg-green-500" : "bg-amber-500"
                       }`}
-                      style={{ width: `${poseValidation.confidence * 100}%` }}
-                    ></div>
+                      style={{ width: `${Math.round(detectionScore * 100)}%` }}
+                    />
                   </div>
                 )}
               </div>
             )}
-            {currentStep.completed && (
-              <p className="text-green-600 font-semibold">✓ Step completed successfully!</p>
-            )}
           </div>
 
-          {/* Manual Capture Controls */}
+          {/* Controls */}
           <div className="flex flex-col items-center gap-2 mt-4">
-            {/* Primary capture — enabled when face is visible */}
-            {!currentStep.completed && (
-              <Button
-                onClick={() => startCountdown()}
-                disabled={!faceDetected || isCapturing}
-                className="w-full max-w-xs"
-              >
-                {isCapturing ? 'Capturing…' : faceDetected ? 'Capture' : 'Waiting for face…'}
+            {!allDone && !currentStep.completed && (
+              <Button onClick={startCountdown} disabled={!ready || !faceDetected || isCapturing} className="w-full max-w-xs">
+                {isCapturing ? "Capturing…" : faceDetected ? "Capture" : "Waiting for face…"}
               </Button>
             )}
 
-            {/* Fallback — appears after 10 continuous seconds without detection */}
-            {!currentStep.completed && !faceDetected && noFaceSeconds >= 10 && !isCapturing && (
-              <div className="text-center space-y-1">
-                <Button
-                  variant="outline"
-                  onClick={() => startCountdown()}
-                  className="w-full max-w-xs"
-                >
-                  Capture anyway
-                </Button>
-                <p className="text-xs text-muted-foreground">
-                  Auto-detection isn't recognising the pose — capture manually.
-                </p>
-              </div>
+            {showNoFaceHint && !currentStep.completed && (
+              <p className="text-xs text-muted-foreground text-center max-w-xs">
+                Still no face found. Face a window or lamp, remove hats or masks, and make sure your whole face is inside the frame.
+              </p>
             )}
           </div>
 
-          {/* Step controls */}
           <div className="flex justify-center space-x-3 mt-2">
-            {currentStep.completed && currentStepIndex < trainingSteps.length - 1 && (
-              <Button onClick={() => {
-                setCurrentStepIndex(prev => prev + 1);
-                setIsCapturing(false);
-              }}>
-                Next Step
+            {allDone ? (
+              <Button variant="outline" onClick={startOver}>
+                Start Again
               </Button>
-            )}
-            {!currentStep.completed && (
-              <Button variant="outline" onClick={resetStep}>
+            ) : (
+              <Button variant="outline" onClick={resetStep} disabled={!ready}>
                 Reset Step
               </Button>
             )}
@@ -589,344 +566,24 @@ export function AdvancedFaceTraining({ onComplete, onCancel }: AdvancedFaceTrain
 
       {/* Steps Overview */}
       <div className="grid grid-cols-3 gap-2">
-        {trainingSteps.map((step, index) => (
+        {steps.map((step, index) => (
           <div
             key={step.id}
             className={`p-3 rounded-lg border text-center ${
               step.completed
-                ? 'bg-emerald-500/10 border-emerald-500/30'
+                ? "bg-emerald-500/10 border-emerald-500/30"
                 : index === currentStepIndex
-                ? 'bg-primary/10 border-primary/30'
-                : 'bg-muted border-border'
+                  ? "bg-primary/10 border-primary/30"
+                  : "bg-muted border-border"
             }`}
           >
             <div className="flex justify-center mb-1">
-              {step.completed ? (
-                <CheckCircle className="w-4 h-4 text-emerald-600" />
-              ) : (
-                step.icon
-              )}
+              {step.completed ? <CheckCircle className="w-4 h-4 text-emerald-600" /> : step.icon}
             </div>
             <div className="text-xs font-medium">{step.name}</div>
           </div>
         ))}
       </div>
-
-      <canvas ref={canvasRef} className="hidden" />
-      </>
-      )}
     </div>
   );
-
-  // Fallback face detection function
-  function analyzeVideoForFace(): boolean {
-    if (!videoRef.current || !canvasRef.current) return false;
-    
-    try {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const context = canvas.getContext('2d');
-      
-      if (!context) return false;
-      
-      // Temporary capture for analysis
-      const tempWidth = 160;
-      const tempHeight = 120;
-      canvas.width = tempWidth;
-      canvas.height = tempHeight;
-      context.drawImage(video, 0, 0, tempWidth, tempHeight);
-      
-      const imageData = context.getImageData(0, 0, tempWidth, tempHeight);
-      const data = imageData.data;
-      
-      let skinPixels = 0;
-      let totalPixels = 0;
-      let avgBrightness = 0;
-      
-      // Analyze center region for face-like characteristics
-      const centerX = tempWidth / 2;
-      const centerY = tempHeight / 2;
-      const radius = Math.min(tempWidth, tempHeight) / 4;
-      
-      for (let x = centerX - radius; x < centerX + radius; x++) {
-        for (let y = centerY - radius; y < centerY + radius; y++) {
-          if (x >= 0 && x < tempWidth && y >= 0 && y < tempHeight) {
-            const i = (y * tempWidth + x) * 4;
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-            
-            // Simple skin tone detection
-            const isSkinTone = r > 95 && g > 40 && b > 20 && 
-                              Math.max(r, g, b) - Math.min(r, g, b) > 15 &&
-                              Math.abs(r - g) > 15 && r > g && r > b;
-            
-            if (isSkinTone) skinPixels++;
-            
-            const brightness = (r + g + b) / 3;
-            avgBrightness += brightness;
-            totalPixels++;
-          }
-        }
-      }
-      
-      if (totalPixels === 0) return false;
-      
-      avgBrightness /= totalPixels;
-      const skinRatio = skinPixels / totalPixels;
-      
-      // Face detected if there's enough skin tone and reasonable brightness
-      return skinRatio > 0.1 && avgBrightness > 50 && avgBrightness < 220;
-    } catch (error) {
-      return false;
-    }
-  }
-
-  // Generate enhanced descriptor for fallback
-  function generateEnhancedDescriptor(canvas: HTMLCanvasElement, context: CanvasRenderingContext2D, stepId: string): number[] {
-    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-    const data = imageData.data;
-    const width = canvas.width;
-    const height = canvas.height;
-    
-    // Create a consistent descriptor based on image analysis
-    const descriptor = [];
-    
-    // Analyze different regions of the face
-    const regions = [
-      { x: 0.25, y: 0.35, w: 0.5, h: 0.2 }, // Eye region
-      { x: 0.35, y: 0.45, w: 0.3, h: 0.25 }, // Nose region
-      { x: 0.3, y: 0.6, w: 0.4, h: 0.2 }, // Mouth region
-      { x: 0.15, y: 0.4, w: 0.7, h: 0.3 }, // Cheek region
-    ];
-    
-    for (const region of regions) {
-      const startX = Math.floor(width * region.x);
-      const startY = Math.floor(height * region.y);
-      const regionWidth = Math.floor(width * region.w);
-      const regionHeight = Math.floor(height * region.h);
-      
-      let totalR = 0, totalG = 0, totalB = 0, pixelCount = 0;
-      
-      for (let x = startX; x < startX + regionWidth && x < width; x++) {
-        for (let y = startY; y < startY + regionHeight && y < height; y++) {
-          const i = (y * width + x) * 4;
-          totalR += data[i];
-          totalG += data[i + 1];
-          totalB += data[i + 2];
-          pixelCount++;
-        }
-      }
-      
-      if (pixelCount > 0) {
-        descriptor.push(totalR / pixelCount / 255); // Normalized R
-        descriptor.push(totalG / pixelCount / 255); // Normalized G
-        descriptor.push(totalB / pixelCount / 255); // Normalized B
-        descriptor.push(pixelCount / (regionWidth * regionHeight)); // Density
-      }
-    }
-    
-    // Add step-specific variations to create different descriptors per pose
-    const stepVariations = {
-      'center': [0.1, 0.0, 0.0],
-      'left': [0.0, 0.1, 0.0],
-      'right': [0.0, 0.0, 0.1],
-      'up': [0.05, 0.05, 0.0],
-      'down': [0.0, 0.05, 0.05],
-      'close': [0.1, 0.1, 0.1],
-      'far': [-0.05, -0.05, -0.05]
-    };
-    
-    const variations: number[] = (stepVariations as any)[stepId] || [0, 0, 0];
-    descriptor.push(...variations);
-    
-    // Pad to consistent length (128 dimensions like face-api.js)
-    while (descriptor.length < 128) {
-      descriptor.push(Math.random() * 0.1 - 0.05); // Small random values
-    }
-    
-    return descriptor.slice(0, 128);
-  }
-
-  // Validate if user is performing the correct pose
-  function validatePoseForStep(stepId: string): { isCorrectPose: boolean; confidence: number; message: string } {
-    if (!videoRef.current || !canvasRef.current) {
-      return { isCorrectPose: false, confidence: 0, message: 'Camera not ready' };
-    }
-
-    try {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const context = canvas.getContext('2d');
-      
-      if (!context) return { isCorrectPose: false, confidence: 0, message: 'Canvas error' };
-
-      // Quick capture for analysis
-      const tempWidth = 160;
-      const tempHeight = 120;
-      canvas.width = tempWidth;
-      canvas.height = tempHeight;
-      context.drawImage(video, 0, 0, tempWidth, tempHeight);
-
-      const imageData = context.getImageData(0, 0, tempWidth, tempHeight);
-      const data = imageData.data;
-
-      // Detect face position and characteristics
-      const faceAnalysis = analyzeFacePosition(data, tempWidth, tempHeight);
-      
-      if (!faceAnalysis.hasFace) {
-        return { isCorrectPose: false, confidence: 0, message: 'Face not detected' };
-      }
-
-      // Validate pose based on step requirements
-      const validation = validateSpecificPose(faceAnalysis, stepId);
-      
-      return validation;
-    } catch (error) {
-      return { isCorrectPose: false, confidence: 0, message: 'Analysis error' };
-    }
-  }
-
-  // Analyze face position and characteristics
-  function analyzeFacePosition(data: Uint8ClampedArray, width: number, height: number) {
-    const centerX = width / 2;
-    const centerY = height / 2;
-    
-    // Find face center by looking for skin tone concentration
-    let faceX = centerX;
-    let faceY = centerY;
-    let skinPixels = 0;
-    let totalSkinX = 0;
-    let totalSkinY = 0;
-    
-    // Analyze face regions to better detect orientation
-    let upperFacePixels = 0;
-    let lowerFacePixels = 0;
-    let leftFacePixels = 0;
-    let rightFacePixels = 0;
-
-    for (let x = 0; x < width; x++) {
-      for (let y = 0; y < height; y++) {
-        const i = (y * width + x) * 4;
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-
-        // Enhanced skin tone detection
-        const isSkinTone = r > 85 && g > 35 && b > 20 && 
-                          Math.max(r, g, b) - Math.min(r, g, b) > 10 &&
-                          Math.abs(r - g) > 10 && r > g && r > b;
-
-        if (isSkinTone) {
-          skinPixels++;
-          totalSkinX += x;
-          totalSkinY += y;
-          
-          // Track face region distribution
-          if (y < centerY) upperFacePixels++;
-          else lowerFacePixels++;
-          
-          if (x < centerX) leftFacePixels++;
-          else rightFacePixels++;
-        }
-      }
-    }
-
-    if (skinPixels > 50) {
-      faceX = totalSkinX / skinPixels;
-      faceY = totalSkinY / skinPixels;
-    }
-
-    // Calculate face offset from center with enhanced sensitivity
-    const horizontalOffset = (faceX - centerX) / (centerX * 0.8); // More sensitive
-    const verticalOffset = (faceY - centerY) / (centerY * 0.8); // More sensitive
-
-    // Estimate face size by skin pixel density
-    const faceSize = skinPixels / (width * height);
-    
-    // Calculate face orientation bias
-    const verticalBias = (upperFacePixels - lowerFacePixels) / skinPixels;
-    const horizontalBias = (leftFacePixels - rightFacePixels) / skinPixels;
-
-    return {
-      hasFace: skinPixels > 80, // More lenient threshold
-      horizontalOffset: horizontalOffset + horizontalBias * 0.3, // Include bias
-      verticalOffset: verticalOffset + verticalBias * 0.3, // Include bias
-      faceSize,
-      skinPixels
-    };
-  }
-
-  // Validate specific pose requirements
-  function validateSpecificPose(faceAnalysis: any, stepId: string): { isCorrectPose: boolean; confidence: number; message: string } {
-    const { horizontalOffset, verticalOffset, faceSize } = faceAnalysis;
-
-    switch (stepId) {
-      case 'center':
-        const isCentered = Math.abs(horizontalOffset) < 0.2 && Math.abs(verticalOffset) < 0.2;
-        const confidence = Math.max(0, 1 - (Math.abs(horizontalOffset) + Math.abs(verticalOffset)) / 0.4);
-        return {
-          isCorrectPose: isCentered,
-          confidence,
-          message: isCentered ? 'Perfect! Face centered' : 'Center your face in the camera'
-        };
-
-      case 'left':
-        const isLeft = horizontalOffset < -0.15;
-        const leftConfidence = Math.max(0, Math.min(1, (-horizontalOffset - 0.15) / 0.3));
-        return {
-          isCorrectPose: isLeft,
-          confidence: leftConfidence,
-          message: isLeft ? 'Good! Head turned left' : 'Turn your head to the left more'
-        };
-
-      case 'right':
-        const isRight = horizontalOffset > 0.15;
-        const rightConfidence = Math.max(0, Math.min(1, (horizontalOffset - 0.15) / 0.3));
-        return {
-          isCorrectPose: isRight,
-          confidence: rightConfidence,
-          message: isRight ? 'Good! Head turned right' : 'Turn your head to the right more'
-        };
-
-      case 'up':
-        const isUp = verticalOffset < -0.05; // More sensitive threshold
-        const upConfidence = Math.max(0, Math.min(1, (-verticalOffset + 0.05) / 0.15));
-        return {
-          isCorrectPose: isUp,
-          confidence: upConfidence,
-          message: isUp ? 'Good! Head tilted up' : 'Tilt your head up slightly'
-        };
-
-      case 'down':
-        const isDown = verticalOffset > 0.1;
-        const downConfidence = Math.max(0, Math.min(1, (verticalOffset - 0.1) / 0.2));
-        return {
-          isCorrectPose: isDown,
-          confidence: downConfidence,
-          message: isDown ? 'Good! Head tilted down' : 'Tilt your head down more'
-        };
-
-      case 'close':
-        const isClose = faceSize > 0.15;
-        const closeConfidence = Math.max(0, Math.min(1, (faceSize - 0.15) / 0.1));
-        return {
-          isCorrectPose: isClose,
-          confidence: closeConfidence,
-          message: isClose ? 'Good! Close enough' : 'Move closer to the camera'
-        };
-
-      case 'far':
-        const isFar = faceSize < 0.08;
-        const farConfidence = Math.max(0, Math.min(1, (0.08 - faceSize) / 0.05));
-        return {
-          isCorrectPose: isFar,
-          confidence: farConfidence,
-          message: isFar ? 'Good! Far enough' : 'Move further from the camera'
-        };
-
-      default:
-        return { isCorrectPose: true, confidence: 1, message: 'Position detected' };
-    }
-  }
 }
