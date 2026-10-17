@@ -10,6 +10,12 @@ import {
   subscriptions,
   webhookEvents,
   employeeConsents,
+  shiftTemplates,
+  shifts,
+  type ShiftTemplate,
+  type InsertShiftTemplate,
+  type Shift,
+  type InsertShift,
   type User,
   type InsertUser,
   type AttendanceRecord,
@@ -34,7 +40,7 @@ import {
   type InsertEmployeeConsent,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, isNull, lt } from "drizzle-orm";
+import { eq, desc, and, sql, isNull, lt, gte, lte, inArray } from "drizzle-orm";
 
 
 export interface IStorage {
@@ -108,6 +114,19 @@ export interface IStorage {
   updateSubscription(stripeSubscriptionId: string, updates: Partial<Subscription>): Promise<Subscription>;
   getWebhookEvent(stripeEventId: string): Promise<WebhookEvent | undefined>;
   createWebhookEvent(event: InsertWebhookEvent): Promise<WebhookEvent>;
+
+  // Scheduling operations
+  getShiftTemplatesForOrg(organizationId: number): Promise<ShiftTemplate[]>;
+  getShiftTemplatesForUser(userId: number): Promise<ShiftTemplate[]>;
+  replaceShiftTemplatesForUser(organizationId: number, userId: number, rows: Omit<InsertShiftTemplate, "organizationId" | "userId">[]): Promise<ShiftTemplate[]>;
+  deleteShiftTemplatesForUser(userId: number): Promise<void>;
+  getShiftsForOrg(organizationId: number, from: string, to: string): Promise<Shift[]>;
+  getShiftsForUser(userId: number, from: string, to: string): Promise<Shift[]>;
+  upsertShift(shift: InsertShift): Promise<Shift>;
+  getShift(id: number): Promise<Shift | undefined>;
+  deleteShift(id: number): Promise<void>;
+  getAttendanceForOrgRange(organizationId: number, from: string, to: string): Promise<AttendanceRecord[]>;
+  getAttendanceForUserRange(userId: number, from: string, to: string): Promise<AttendanceRecord[]>;
 
   // Consent operations
   createConsent(consent: InsertEmployeeConsent): Promise<EmployeeConsent>;
@@ -756,6 +775,91 @@ export class DatabaseStorage implements IStorage {
       .values(event)
       .returning();
     return webhookEvent;
+  }
+
+  // ─── Scheduling ────────────────────────────
+  async getShiftTemplatesForOrg(organizationId: number): Promise<ShiftTemplate[]> {
+    return db.select().from(shiftTemplates).where(eq(shiftTemplates.organizationId, organizationId));
+  }
+
+  async getShiftTemplatesForUser(userId: number): Promise<ShiftTemplate[]> {
+    return db.select().from(shiftTemplates).where(eq(shiftTemplates.userId, userId));
+  }
+
+  async replaceShiftTemplatesForUser(organizationId: number, userId: number, rows: Omit<InsertShiftTemplate, "organizationId" | "userId">[]): Promise<ShiftTemplate[]> {
+    return db.transaction(async (tx: any) => {
+      await tx.delete(shiftTemplates).where(eq(shiftTemplates.userId, userId));
+      if (rows.length === 0) return [];
+      return tx
+        .insert(shiftTemplates)
+        .values(rows.map((r) => ({ ...r, organizationId, userId })))
+        .returning();
+    });
+  }
+
+  async deleteShiftTemplatesForUser(userId: number): Promise<void> {
+    await db.delete(shiftTemplates).where(eq(shiftTemplates.userId, userId));
+  }
+
+  async getShiftsForOrg(organizationId: number, from: string, to: string): Promise<Shift[]> {
+    return db
+      .select()
+      .from(shifts)
+      .where(and(eq(shifts.organizationId, organizationId), gte(shifts.date, from), lte(shifts.date, to)))
+      .orderBy(shifts.date);
+  }
+
+  async getShiftsForUser(userId: number, from: string, to: string): Promise<Shift[]> {
+    return db
+      .select()
+      .from(shifts)
+      .where(and(eq(shifts.userId, userId), gte(shifts.date, from), lte(shifts.date, to)))
+      .orderBy(shifts.date);
+  }
+
+  async upsertShift(shift: InsertShift): Promise<Shift> {
+    const [row] = await db
+      .insert(shifts)
+      .values(shift)
+      .onConflictDoUpdate({
+        target: [shifts.userId, shifts.date],
+        set: {
+          startTime: shift.startTime,
+          endTime: shift.endTime,
+          locationId: shift.locationId ?? null,
+          status: shift.status ?? "scheduled",
+          notes: shift.notes ?? null,
+          createdBy: shift.createdBy ?? null,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return row;
+  }
+
+  async getShift(id: number): Promise<Shift | undefined> {
+    const [row] = await db.select().from(shifts).where(eq(shifts.id, id));
+    return row || undefined;
+  }
+
+  async deleteShift(id: number): Promise<void> {
+    await db.delete(shifts).where(eq(shifts.id, id));
+  }
+
+  async getAttendanceForOrgRange(organizationId: number, from: string, to: string): Promise<AttendanceRecord[]> {
+    return db
+      .select()
+      .from(attendanceRecords)
+      .where(and(eq(attendanceRecords.organizationId, organizationId), gte(attendanceRecords.date, from), lte(attendanceRecords.date, to)))
+      .orderBy(attendanceRecords.clockInTime);
+  }
+
+  async getAttendanceForUserRange(userId: number, from: string, to: string): Promise<AttendanceRecord[]> {
+    return db
+      .select()
+      .from(attendanceRecords)
+      .where(and(eq(attendanceRecords.userId, userId), gte(attendanceRecords.date, from), lte(attendanceRecords.date, to)))
+      .orderBy(attendanceRecords.clockInTime);
   }
 
   // ─── Consents ───────────────────────────────

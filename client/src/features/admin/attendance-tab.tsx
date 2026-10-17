@@ -7,12 +7,29 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { AvatarInitials } from "@/components/ui/avatar-initials";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fullName } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { useAttendance, useEmployees } from "./use-admin-data";
+import { keyToDate } from "@/lib/dates";
 
 export function hoursBetween(a: string | Date, b?: string | Date | null) {
   if (!b) return null;
   const ms = new Date(b).getTime() - new Date(a).getTime();
   return Math.max(0, Math.round((ms / 36e5) * 100) / 100);
+}
+
+export function scheduleTone(status?: string | null) {
+  switch (status) {
+    case "late":
+      return "bg-warning/15 text-warning";
+    case "on_time":
+      return "bg-success/10 text-success";
+    case "no_show":
+      return "bg-destructive/10 text-destructive";
+    case "unscheduled":
+      return "bg-info/10 text-info";
+    default:
+      return "bg-muted text-muted-foreground";
+  }
 }
 
 export function AttendanceTab() {
@@ -26,7 +43,7 @@ export function AttendanceTab() {
         <CardTitle className="flex items-center gap-2">
           <Clock className="h-5 w-5 text-primary" /> Attendance
         </CardTitle>
-        <CardDescription>Most recent clock-ins across your organisation.</CardDescription>
+        <CardDescription>Most recent clock-ins, compared with each person's scheduled shift.</CardDescription>
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -40,16 +57,19 @@ export function AttendanceTab() {
                 <TableRow>
                   <TableHead>Employee</TableHead>
                   <TableHead>Date</TableHead>
+                  <TableHead>Scheduled</TableHead>
                   <TableHead>In</TableHead>
                   <TableHead>Out</TableHead>
                   <TableHead>Hours</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead>Method</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {records.slice(0, 50).map((r) => {
+                {records.slice(0, 50).map((r: any) => {
                   const emp = byId.get(r.userId);
                   const hrs = hoursBetween(r.clockInTime, r.clockOutTime);
+                  const sch = r.schedule;
                   return (
                     <TableRow key={r.id}>
                       <TableCell>
@@ -58,10 +78,19 @@ export function AttendanceTab() {
                           <span className="font-medium">{fullName(emp) || "Unknown"}</span>
                         </div>
                       </TableCell>
-                      <TableCell>{format(new Date(r.date + "T00:00:00"), "EEE d MMM")}</TableCell>
+                      <TableCell>{format(keyToDate(r.date), "EEE d MMM")}</TableCell>
+                      <TableCell className="tabular-nums text-muted-foreground">
+                        {sch?.scheduledStart ? `${format(new Date(sch.scheduledStart), "HH:mm")}–${format(new Date(sch.scheduledEnd), "HH:mm")}` : "—"}
+                      </TableCell>
                       <TableCell className="tabular-nums">{format(new Date(r.clockInTime), "HH:mm")}</TableCell>
                       <TableCell className="tabular-nums">{r.clockOutTime ? format(new Date(r.clockOutTime), "HH:mm") : <span className="text-success">On shift</span>}</TableCell>
                       <TableCell className="tabular-nums">{hrs != null ? `${hrs}h` : "—"}</TableCell>
+                      <TableCell>
+                        <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", scheduleTone(sch?.status))}>
+                          {sch ? sch.label : "Unscheduled"}
+                          {sch?.leftEarlyMinutes > 0 && ` · left ${sch.leftEarlyMinutes}m early`}
+                        </span>
+                      </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="capitalize">
                           {r.checkInMethod || "face"}

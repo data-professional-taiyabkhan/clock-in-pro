@@ -18,6 +18,9 @@ import { apiRequest, queryClient as globalQueryClient } from "@/lib/queryClient"
 import { faceRecognition } from "@/lib/face-recognition";
 import { cleanError, type SafeUser } from "@/lib/types";
 import { useOrganization } from "@/features/admin/use-admin-data";
+import { statusTone, useMyShifts } from "@/features/admin/schedule-api";
+import { addDays, keyToDate, startOfWeek, todayKey } from "@/lib/dates";
+import { cn } from "@/lib/utils";
 
 interface UserLocation {
   latitude?: number;
@@ -66,6 +69,9 @@ export default function EmployeeDashboard() {
   const { data: org } = useOrganization();
   const { data: today } = useQuery<TodayAttendance>({ queryKey: ["/api/attendance/today"], queryFn: () => apiRequest("/api/attendance/today"), refetchInterval: 60_000 });
   const { data: records = [] } = useQuery<any[]>({ queryKey: ["/api/attendance"], queryFn: () => apiRequest("/api/attendance") });
+  const weekStart = startOfWeek(todayKey());
+  const { data: myShifts } = useMyShifts(weekStart, addDays(weekStart, 6));
+  const todayCell = myShifts?.days.find((d) => d.date === myShifts.today);
 
   const refreshAttendance = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
@@ -230,6 +236,14 @@ export default function EmployeeDashboard() {
                     <CardTitle className="text-2xl">{isIn ? "You're clocked in" : "Not clocked in"}</CardTitle>
                     <CardDescription>
                       {isIn ? `Since ${sinceLabel} · ${hoursSoFar}h so far` : today?.record?.clockOutTime ? `Clocked out at ${format(new Date(today.record.clockOutTime), "HH:mm")}` : "Clock in when you arrive"}
+                      {todayCell?.shift && todayCell.shift.status !== "cancelled" && (
+                        <span className="mt-1 block">
+                          Today's shift {todayCell.shift.startTime}–{todayCell.shift.endTime}
+                          {todayCell.evaluation && todayCell.evaluation.status !== "upcoming" && (
+                            <span className={cn("ml-2 rounded-full px-2 py-0.5 text-[11px] font-medium", statusTone(todayCell))}>{todayCell.label}</span>
+                          )}
+                        </span>
+                      )}
                     </CardDescription>
                   </div>
                   <Badge variant="outline" className={isIn ? "border-success/40 bg-success/10 text-success" : "text-muted-foreground"}>
@@ -359,6 +373,41 @@ export default function EmployeeDashboard() {
 
           <Card>
             <CardHeader>
+              <CardTitle>Your shifts this week</CardTitle>
+              <CardDescription>
+                {myShifts?.hasContract ? "From your weekly contract, plus any one-off changes" : "No weekly contract set. Ask your admin if you expect shifts here."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {!myShifts ? null : myShifts.days.every((d) => !d.shift) ? (
+                <EmptyState icon={<Clock />} title="No shifts scheduled this week" className="py-6" />
+              ) : (
+                <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+                  {myShifts.days.map((d) => {
+                    const isToday = d.date === myShifts.today;
+                    return (
+                      <li key={d.date} className={cn("rounded-xl border p-3", isToday ? "border-primary/50 bg-primary/5" : "border-border", !d.shift && "opacity-60")}>
+                        <p className={cn("text-xs font-medium uppercase tracking-wide", isToday ? "text-primary" : "text-muted-foreground")}>{format(keyToDate(d.date), "EEE d")}</p>
+                        {d.shift ? (
+                          <>
+                            <p className={cn("mt-1 text-sm font-semibold tabular-nums", d.shift.status === "cancelled" && "line-through text-muted-foreground")}>
+                              {d.shift.startTime}–{d.shift.endTime}
+                            </p>
+                            <span className={cn("mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-medium", statusTone(d))}>{d.label}</span>
+                          </>
+                        ) : (
+                          <p className="mt-1 text-sm text-muted-foreground">Off</p>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>Recent attendance</CardTitle>
               <CardDescription>Your last few shifts</CardDescription>
             </CardHeader>
@@ -377,6 +426,7 @@ export default function EmployeeDashboard() {
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
+                        {r.schedule && <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", statusTone({ shift: null, evaluation: { status: r.schedule.status } as any, label: r.schedule.label }))}>{r.schedule.label}</span>}
                         {r.checkInMethod === "manual" && <Badge variant="outline">Manual</Badge>}
                         {r.clockOutTime ? (
                           <span className="text-sm font-medium tabular-nums">{((new Date(r.clockOutTime).getTime() - new Date(r.clockInTime).getTime()) / 36e5).toFixed(1)}h</span>

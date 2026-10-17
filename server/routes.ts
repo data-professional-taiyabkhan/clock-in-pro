@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { setupAuth, requireAuth, requireAdmin, hashPassword, comparePasswords } from "./auth";
+import { requireAuth, requireAdmin, hashPassword, comparePasswords } from "./auth";
 import { storage } from "./storage";
 import { insertAttendanceRecordSchema, insertLocationSchema, loginSchema, registerSchema, insertOrganizationSchema, setupPinSchema, verifyPinSchema, signupSchema, organizationBrandingSchema, organizationSettingsSchema, users, employeeInvitations, locations, employeeLocations } from "@shared/schema";
 import type { User, Organization } from "@shared/schema";
@@ -20,6 +20,8 @@ import { uploadFaceImage, getSignedFaceImageUrl, downloadFaceImageAsBase64 } fro
 import { analyzeFaceQuality } from "./lib/face-recognition";
 import { syncBillingQuantity } from "./jobs/sync-billing-quantity";
 import { TRIAL_DAYS, createCheckoutSession } from "./lib/billing";
+import { todayKeyForOrg, DEFAULT_TZ } from "./lib/time";
+import { annotateRecords } from "./lib/scheduling";
 import {
   DESCRIPTOR_LENGTH,
   euclideanDistance,
@@ -97,7 +99,6 @@ async function performLivenessDetection(_imageData: string): Promise<{
 }
 
 export function registerRoutes(app: Express): Server {
-  setupAuth(app);
 
   // ── Health check (Railway / uptime monitors) ──────────────────────────────
   app.get("/api/health", (_req, res) => {
@@ -930,7 +931,7 @@ export function registerRoutes(app: Express): Server {
 
           let attendanceRecord;
           if (action === 'out') {
-            const today = new Date().toISOString().split('T')[0];
+            const today = await todayKeyForOrg(req.user!.organizationId);
             const todayRecord = await storage.getTodayAttendanceRecord(req.user!.id, today);
             if (!todayRecord || todayRecord.clockOutTime) {
               return res.status(400).json({
@@ -945,7 +946,7 @@ export function registerRoutes(app: Express): Server {
               userId: req.user!.id,
               organizationId: req.user!.organizationId!,
               clockInTime: new Date(),
-              date: new Date().toISOString().split('T')[0],
+              date: await todayKeyForOrg(req.user!.organizationId),
             });
           }
 
@@ -1118,7 +1119,7 @@ export function registerRoutes(app: Express): Server {
         // Create attendance record based on action
         let attendanceRecord;
         if (action === 'out') {
-          const today = new Date().toISOString().split('T')[0];
+          const today = await todayKeyForOrg(req.user!.organizationId);
           const todayRecord = await storage.getTodayAttendanceRecord(req.user!.id, today);
 
           if (!todayRecord || todayRecord.clockOutTime) {
@@ -1136,7 +1137,7 @@ export function registerRoutes(app: Express): Server {
             userId: req.user!.id,
             organizationId: req.user!.organizationId!,
             clockInTime: new Date(),
-            date: new Date().toISOString().split('T')[0],
+            date: await todayKeyForOrg(req.user!.organizationId),
             checkInMethod: 'pin'
           });
         }
@@ -1319,7 +1320,7 @@ export function registerRoutes(app: Express): Server {
         return res.status(400).json({ message: "Face verification required for check-in" });
       }
 
-      const today = format(new Date(), "yyyy-MM-dd");
+      const today = await todayKeyForOrg(req.user!.organizationId);
 
       // Check if user has any active (unclosed) sessions today
       const records = await storage.getUserAttendanceRecords(req.user!.id, 20);
@@ -1355,7 +1356,7 @@ export function registerRoutes(app: Express): Server {
 
   app.post("/api/clock-out", requireAuth, async (req, res) => {
     try {
-      const today = format(new Date(), "yyyy-MM-dd");
+      const today = await todayKeyForOrg(req.user!.organizationId);
 
       // Get all attendance records and find the most recent one without clock-out
       const records = await storage.getUserAttendanceRecords(req.user!.id, 20);
@@ -1423,7 +1424,7 @@ export function registerRoutes(app: Express): Server {
         return res.status(400).json({ message: "User ID is required" });
       }
 
-      const today = format(new Date(), "yyyy-MM-dd");
+      const today = await todayKeyForOrg(req.user!.organizationId);
 
       // Find the most recent active record for the user
       const records = await storage.getUserAttendanceRecords(userId, 20);
@@ -1469,8 +1470,22 @@ export function registerRoutes(app: Express): Server {
         // Employees see only their own records
         records = await storage.getUserAttendanceRecords(req.user!.id, 30);
       } else {
-        // Managers and admins see all records from their organization
+        // Admins see all records from their organization
         records = await storage.getAllAttendanceRecords(100, req.user!.organizationId!);
+      }
+
+      // Attach scheduled shift + lateness verdict to each record
+      if (records.length > 0) {
+        const orgId = req.user!.organizationId!;
+        const org = await storage.getOrganization(orgId);
+        const tz = org?.timezone || DEFAULT_TZ;
+        const grace = org?.latenessGraceMinutes ?? 5;
+        const dates = records.map((r) => r.date).sort();
+        const [templates, overrides] = await Promise.all([
+          req.user!.role === "employee" ? storage.getShiftTemplatesForUser(req.user!.id) : storage.getShiftTemplatesForOrg(orgId),
+          req.user!.role === "employee" ? storage.getShiftsForUser(req.user!.id, dates[0], dates[dates.length - 1]) : storage.getShiftsForOrg(orgId, dates[0], dates[dates.length - 1]),
+        ]);
+        return res.json(annotateRecords(records, templates, overrides, grace, tz));
       }
 
       res.json(records);
@@ -1526,7 +1541,7 @@ export function registerRoutes(app: Express): Server {
         }, 0);
 
         // Calculate today's status using single source of truth
-        const today = format(new Date(), "yyyy-MM-dd");
+        const today = await todayKeyForOrg(req.user!.organizationId);
         const todayRecords = records.filter(record => record.date === today);
 
         // Use the global active record check
@@ -1843,7 +1858,7 @@ export function registerRoutes(app: Express): Server {
 
   app.get("/api/attendance/today", requireAuth, async (req, res) => {
     try {
-      const today = format(new Date(), "yyyy-MM-dd");
+      const today = await todayKeyForOrg(req.user!.organizationId);
 
       // Get all records for today
       const records = await storage.getUserAttendanceRecords(req.user!.id, 10);

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Clock, CreditCard, LayoutDashboard, Mail, MapPinned, Palette, Settings, Users } from "lucide-react";
+import { Building2, CalendarDays, Clock, CreditCard, LayoutDashboard, Mail, MapPinned, Palette, Settings, Users } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AppShell, PageTitle } from "@/components/layout/app-shell";
 import { ChangePasswordDialog } from "@/components/change-password-dialog";
@@ -15,10 +15,12 @@ import { InvitationsTab } from "@/features/admin/invitations-tab";
 import { SettingsTab } from "@/features/admin/settings-tab";
 import { BillingBanner, BillingTab } from "@/features/admin/billing-tab";
 import { BrandingTab } from "@/features/admin/branding-tab";
+import { RotaTab } from "@/features/admin/rota-tab";
 import { useOrganization } from "@/features/admin/use-admin-data";
 
 const tabs = [
   { value: "overview", label: "Overview", icon: LayoutDashboard },
+  { value: "rota", label: "Rota", icon: CalendarDays },
   { value: "employees", label: "Employees", icon: Users },
   { value: "attendance", label: "Attendance", icon: Clock },
   { value: "locations", label: "Locations", icon: Building2 },
@@ -68,6 +70,9 @@ export default function AdminDashboard() {
         <BillingBanner onOpenBilling={() => setTab("billing")} />
         <TabsContent value="overview">
           <OverviewTab />
+        </TabsContent>
+        <TabsContent value="rota">
+          <RotaTab />
         </TabsContent>
         <TabsContent value="employees">
           <EmployeesTab currentUserId={user.id} />

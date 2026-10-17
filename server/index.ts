@@ -8,6 +8,8 @@ import { registerRoutes } from "./routes";
 import { registerBillingRoutes } from "./routes/billing.routes";
 import { registerPinRoutes } from "./routes/pin.routes";
 import { registerPasswordRoutes } from "./routes/password.routes";
+import { registerScheduleRoutes } from "./routes/schedules.routes";
+import { setupAuth } from "./auth";
 import { requireActiveSubscription } from "./middleware/entitlement";
 import { startTrialExpiryReminderJob } from "./jobs/trial-expiry-reminder";
 import { startAutoClockoutJob } from "./jobs/auto-clockout";
@@ -60,19 +62,16 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  const server = await registerRoutes(app);
-
-  // Register billing routes (Stripe checkout, webhooks, portal)
-  registerBillingRoutes(app);
-
-  // Register PIN and consent routes
-  registerPinRoutes(app);
-
-  // Register password reset routes
-  registerPasswordRoutes(app);
-
-  // Apply entitlement enforcement to all subsequent API routes
+  // Sessions first, then the entitlement gate, then every API route.
+  // (Express only runs middleware for routes registered after it.)
+  setupAuth(app);
   app.use("/api", requireActiveSubscription);
+
+  const server = await registerRoutes(app);
+  registerBillingRoutes(app);
+  registerPinRoutes(app);
+  registerPasswordRoutes(app);
+  registerScheduleRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

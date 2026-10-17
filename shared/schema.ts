@@ -8,6 +8,7 @@ import {
   boolean,
   json,
   real,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -252,6 +253,49 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
   usedAt: timestamp("used_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+// ──────────────────────────────────────────────
+// Shift templates (weekly contracts) — one row per employee per weekday
+// ──────────────────────────────────────────────
+export const shiftTemplates = pgTable(
+  "shift_templates",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id").notNull().references(() => organizations.id),
+    userId: integer("user_id").notNull().references(() => users.id),
+    dayOfWeek: integer("day_of_week").notNull(), // 0 = Sunday … 6 = Saturday
+    startTime: varchar("start_time").notNull(), // "HH:MM" local time
+    endTime: varchar("end_time").notNull(), // "HH:MM" local time; <= start means it ends next day
+    locationId: integer("location_id").references(() => locations.id),
+    effectiveFrom: varchar("effective_from"), // "YYYY-MM-DD" or null
+    effectiveTo: varchar("effective_to"), // "YYYY-MM-DD" or null
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (t) => [uniqueIndex("shift_templates_user_day_idx").on(t.userId, t.dayOfWeek)]
+);
+
+// ──────────────────────────────────────────────
+// Shifts — one-off shifts and overrides for a specific date
+// ──────────────────────────────────────────────
+export const shifts = pgTable(
+  "shifts",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id").notNull().references(() => organizations.id),
+    userId: integer("user_id").notNull().references(() => users.id),
+    date: varchar("date").notNull(), // "YYYY-MM-DD" in the organisation's timezone
+    startTime: varchar("start_time").notNull(),
+    endTime: varchar("end_time").notNull(),
+    locationId: integer("location_id").references(() => locations.id),
+    status: varchar("status").notNull().default("scheduled"), // scheduled | cancelled
+    notes: text("notes"),
+    createdBy: integer("created_by").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (t) => [uniqueIndex("shifts_user_date_idx").on(t.userId, t.date)]
+);
 
 // ══════════════════════════════════════════════
 // RELATIONS
@@ -552,3 +596,39 @@ export type SetupPinData = z.infer<typeof setupPinSchema>;
 export type VerifyPinData = z.infer<typeof verifyPinSchema>;
 export type ConsentData = z.infer<typeof consentSchema>;
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
+// ══════════════════════════════════════════════
+// SCHEDULING SCHEMAS
+// ══════════════════════════════════════════════
+
+export const timeHHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Time must be HH:MM");
+export const dateKey = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD");
+
+export const contractDaySchema = z.object({
+  dayOfWeek: z.number().int().min(0).max(6),
+  startTime: timeHHMM,
+  endTime: timeHHMM,
+  locationId: z.number().int().positive().nullable().optional(),
+});
+
+export const weeklyContractSchema = z.object({
+  days: z.array(contractDaySchema).max(7),
+  effectiveFrom: dateKey.nullable().optional(),
+  effectiveTo: dateKey.nullable().optional(),
+}).refine((c) => new Set(c.days.map((d) => d.dayOfWeek)).size === c.days.length, { message: "Each weekday can only appear once", path: ["days"] });
+
+export const shiftUpsertSchema = z.object({
+  userId: z.number().int().positive(),
+  date: dateKey,
+  startTime: timeHHMM,
+  endTime: timeHHMM,
+  locationId: z.number().int().positive().nullable().optional(),
+  notes: z.string().trim().max(240).nullable().optional(),
+  status: z.enum(["scheduled", "cancelled"]).optional(),
+});
+
+export type ShiftTemplate = typeof shiftTemplates.$inferSelect;
+export type InsertShiftTemplate = typeof shiftTemplates.$inferInsert;
+export type Shift = typeof shifts.$inferSelect;
+export type InsertShift = typeof shifts.$inferInsert;
+export type WeeklyContract = z.infer<typeof weeklyContractSchema>;
+export type ShiftUpsert = z.infer<typeof shiftUpsertSchema>;
