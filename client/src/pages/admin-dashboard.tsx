@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Clock, LayoutDashboard, Mail, MapPinned, Settings, Users } from "lucide-react";
+import { Building2, Clock, CreditCard, LayoutDashboard, Mail, MapPinned, Settings, Users } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AppShell, PageTitle } from "@/components/layout/app-shell";
 import { ChangePasswordDialog } from "@/components/change-password-dialog";
@@ -13,6 +13,7 @@ import { AssignmentsTab } from "@/features/admin/assignments-tab";
 import { AttendanceTab } from "@/features/admin/attendance-tab";
 import { InvitationsTab } from "@/features/admin/invitations-tab";
 import { SettingsTab } from "@/features/admin/settings-tab";
+import { BillingBanner, BillingTab } from "@/features/admin/billing-tab";
 import { useOrganization } from "@/features/admin/use-admin-data";
 
 const tabs = [
@@ -22,12 +23,14 @@ const tabs = [
   { value: "locations", label: "Locations", icon: Building2 },
   { value: "assignments", label: "Sites", icon: MapPinned },
   { value: "invitations", label: "Invitations", icon: Mail },
+  { value: "billing", label: "Billing", icon: CreditCard },
   { value: "settings", label: "Settings", icon: Settings },
 ];
 
 export default function AdminDashboard() {
   const queryClient = useQueryClient();
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
+  const [tab, setTab] = useState("overview");
   const { data: user } = useQuery<SafeUser>({ queryKey: ["/api/user"], queryFn: () => apiRequest("/api/user") });
   const { data: org } = useOrganization();
 
@@ -49,20 +52,18 @@ export default function AdminDashboard() {
       onLogout={() => logout.mutate()}
       onChangePassword={() => setShowPasswordDialog(true)}
     >
-      <Tabs defaultValue="overview" className="space-y-6">
-        <PageTitle
-          title={`Good ${greeting()}, ${user.firstName}`}
-          subtitle={org?.name}
-          actions={
-            <TabsList className="h-auto flex-wrap justify-start gap-1 bg-muted/60 p-1">
-              {tabs.map((t) => (
-                <TabsTrigger key={t.value} value={t.value} className="gap-1.5 rounded-lg px-3 py-1.5">
-                  <t.icon className="h-4 w-4" /> <span className="hidden sm:inline">{t.label}</span>
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          }
-        />
+      <Tabs value={tab} onValueChange={setTab} className="space-y-6">
+        <PageTitle title={`Good ${greeting()}, ${user.firstName}`} subtitle={org?.name} />
+        <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
+          <TabsList className="inline-flex h-auto w-max gap-1 bg-muted/60 p-1">
+            {tabs.map((t) => (
+              <TabsTrigger key={t.value} value={t.value} className="gap-1.5 rounded-lg px-3 py-1.5">
+                <t.icon className="h-4 w-4" /> {t.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
+        <BillingBanner onOpenBilling={() => setTab("billing")} />
         <TabsContent value="overview">
           <OverviewTab />
         </TabsContent>
@@ -80,6 +81,9 @@ export default function AdminDashboard() {
         </TabsContent>
         <TabsContent value="invitations">
           <InvitationsTab />
+        </TabsContent>
+        <TabsContent value="billing">
+          <BillingTab />
         </TabsContent>
         <TabsContent value="settings">
           <SettingsTab />

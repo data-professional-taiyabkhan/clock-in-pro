@@ -19,6 +19,7 @@ import { sendInvitationEmail } from "./lib/email";
 import { uploadFaceImage, getSignedFaceImageUrl, downloadFaceImageAsBase64 } from "./lib/face-image-storage";
 import { analyzeFaceQuality } from "./lib/face-recognition";
 import { syncBillingQuantity } from "./jobs/sync-billing-quantity";
+import { TRIAL_DAYS, createCheckoutSession } from "./lib/billing";
 import {
   DESCRIPTOR_LENGTH,
   euclideanDistance,
@@ -194,9 +195,9 @@ export function registerRoutes(app: Express): Server {
         return res.status(400).json({ message: "An account with this email already exists" });
       }
 
-      // Create organisation with 14-day trial
+      // Create organisation with a 30-day free month
       const trialEnd = new Date();
-      trialEnd.setDate(trialEnd.getDate() + 14);
+      trialEnd.setDate(trialEnd.getDate() + TRIAL_DAYS);
 
       const org = await storage.createOrganization({
         name: data.orgName,
@@ -223,9 +224,20 @@ export function registerRoutes(app: Express): Server {
       // Auto-login
       (req.session as any).userId = adminUser.id;
 
+      // Collect a card now so billing starts automatically on day 31.
+      // If Stripe is not configured (local dev) or errors, signup still succeeds.
+      let checkoutUrl: string | null = null;
+      try {
+        const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+        checkoutUrl = await createCheckoutSession({ org, admin: adminUser, plan: data.plan ?? "monthly", baseUrl });
+      } catch (billingError) {
+        console.error("Signup checkout session failed (continuing without card):", billingError);
+      }
+
       res.json({
         user: toSafeUser(adminUser),
         organization: { id: org.id, name: org.name, slug: org.slug, trialEndsAt: org.trialEndsAt },
+        checkoutUrl,
       });
     } catch (error) {
       console.error("Signup error:", error);

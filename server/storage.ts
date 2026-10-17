@@ -62,6 +62,7 @@ export interface IStorage {
   getAllUsers(organizationId?: number): Promise<User[]>;
   deleteUser(id: number): Promise<void>;
   getActiveEmployeeCount(organizationId: number): Promise<number>;
+  getOrganizationAdmins(organizationId: number): Promise<User[]>;
 
   // Attendance operations
   createAttendanceRecord(record: InsertAttendanceRecord): Promise<AttendanceRecord>;
@@ -367,6 +368,13 @@ export class DatabaseStorage implements IStorage {
         eq(users.isActive, true)
       ));
     return Number(result[0].count);
+  }
+
+  async getOrganizationAdmins(organizationId: number): Promise<User[]> {
+    return db
+      .select()
+      .from(users)
+      .where(and(eq(users.organizationId, organizationId), eq(users.role, "admin"), eq(users.isActive, true)));
   }
 
   // ─── Attendance ─────────────────────────────

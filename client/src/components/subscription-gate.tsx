@@ -1,39 +1,49 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { AlertTriangle, ArrowRight, CreditCard, Loader2 } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { AlertTriangle, ArrowRight, CreditCard, Loader2, LogOut } from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/brand/logo";
 import { cn } from "@/lib/utils";
+import type { SafeUser } from "@/lib/types";
+
+export type BillingReason = "trial_no_card" | "trial_with_card" | "subscription_active" | "payment_failed" | "subscription_required" | "org_not_found";
+export type Plan = "monthly" | "annual";
 
 export interface BillingStatus {
   isActive: boolean;
-  reason: string;
+  reason: BillingReason;
+  stripeConfigured: boolean;
+  trialEndsAt: string | null;
   trialDaysRemaining: number;
-  trialEndsAt?: string | null;
-  needsPaymentMethod?: boolean;
-  subscription: {
-    status: string;
-    currentPeriodEnd: string;
-    cancelAtPeriodEnd: boolean;
-    activeEmployeeQuantity: number;
-    trialEndsAt?: string | null;
-  } | null;
+  hasSubscription: boolean;
+  paymentFailed: boolean;
+  plan: Plan | null;
+  pricePerSeat: number;
+  activeEmployees: number;
+  billedSeats: number;
+  estimatedCharge: number;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  subscriptionStatus: string | null;
 }
+
+export const PRICE: Record<Plan, number> = { monthly: 3.5, annual: 3.0 };
 
 export function useBillingStatus() {
   return useQuery<BillingStatus>({
     queryKey: ["/api/billing/status"],
+    queryFn: () => apiRequest("/api/billing/status"),
     refetchInterval: (query) => {
       const data = query.state.data as BillingStatus | undefined;
-      return data?.isActive ? 60_000 : 3_000;
+      return data?.isActive ? 60_000 : 5_000;
     },
   });
 }
 
 export function useCheckout() {
   return useMutation({
-    mutationFn: async (priceType: "monthly" | "annual") => {
+    mutationFn: async (priceType: Plan) => {
       const result = await apiRequest("/api/billing/checkout-session", { method: "POST", body: { priceType } });
       if (result.url) window.location.href = result.url;
     },
@@ -51,8 +61,16 @@ export function usePortal() {
 
 export function SubscriptionGate({ children }: { children: ReactNode }) {
   const { data: status, isLoading } = useBillingStatus();
+  const { data: user } = useQuery<SafeUser>({ queryKey: ["/api/user"], queryFn: () => apiRequest("/api/user") });
   const checkout = useCheckout();
   const portal = usePortal();
+  const logout = useMutation({
+    mutationFn: async () => apiRequest("/api/logout", { method: "POST" }),
+    onSuccess: () => {
+      queryClient.clear();
+      window.location.href = "/";
+    },
+  });
 
   if (isLoading) {
     return (
@@ -64,7 +82,8 @@ export function SubscriptionGate({ children }: { children: ReactNode }) {
 
   if (status?.isActive) return <>{children}</>;
 
-  const hadSubscription = !!status?.subscription;
+  const cancelled = status?.subscriptionStatus === "canceled";
+  const isAdmin = user?.role === "admin";
 
   return (
     <div className="glow-bg flex min-h-screen items-center justify-center px-4 py-10">
@@ -76,33 +95,47 @@ export function SubscriptionGate({ children }: { children: ReactNode }) {
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-warning/15 text-warning">
             <AlertTriangle className="h-7 w-7" />
           </div>
-          <h1 className="text-center text-2xl font-bold">
-            {hadSubscription ? "Your subscription needs attention" : "Your free month has ended"}
-          </h1>
-          <p className="mt-2 text-center text-muted-foreground">
-            {hadSubscription
-              ? "Payment could not be collected or the subscription was cancelled. Update your billing details to keep your team clocking in."
-              : "Add a card to keep your team's attendance running. You pay only for active employees. Admin seats are free."}
-          </p>
 
-          <div className="mt-6 grid gap-4 sm:grid-cols-2">
-            <PlanButton name="Monthly" price="£3.50" note="per employee / month" onClick={() => checkout.mutate("monthly")} disabled={checkout.isPending} />
-            <PlanButton name="Annual" price="£3.00" note="per employee / month, billed yearly" badge="Save 14%" highlighted onClick={() => checkout.mutate("annual")} disabled={checkout.isPending} />
-          </div>
-
-          {hadSubscription && (
-            <Button variant="outline" className="mt-4 w-full" onClick={() => portal.mutate()} disabled={portal.isPending}>
-              <CreditCard className="h-4 w-4" /> Manage existing subscription
-            </Button>
+          {!isAdmin ? (
+            <>
+              <h1 className="text-center text-2xl font-bold">Clock-in is paused</h1>
+              <p className="mt-2 text-center text-muted-foreground">
+                Your organisation's Clock-In Pro subscription is inactive. Ask your admin to add a payment method, then try again.
+              </p>
+              <Button variant="outline" className="mt-6 w-full" onClick={() => logout.mutate()}>
+                <LogOut className="h-4 w-4" /> Log out
+              </Button>
+            </>
+          ) : (
+            <>
+              <h1 className="text-center text-2xl font-bold">{cancelled ? "Your subscription was cancelled" : "Your free month has ended"}</h1>
+              <p className="mt-2 text-center text-muted-foreground">
+                Choose a plan to keep your team clocking in. You pay only for active employees. Admin seats are free.
+              </p>
+              <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                <PlanButton name="Monthly" price="£3.50" note="per employee / month" onClick={() => checkout.mutate("monthly")} disabled={checkout.isPending} />
+                <PlanButton name="Annual" price="£3.00" note="per employee / month, billed yearly" badge="Save 14%" highlighted onClick={() => checkout.mutate("annual")} disabled={checkout.isPending} />
+              </div>
+              {status?.hasSubscription && (
+                <Button variant="outline" className="mt-4 w-full" onClick={() => portal.mutate()} disabled={portal.isPending}>
+                  <CreditCard className="h-4 w-4" /> Open billing portal
+                </Button>
+              )}
+              <p className="mt-4 text-center text-xs text-muted-foreground">Cancel anytime from the billing portal.</p>
+              <div className="mt-2 text-center">
+                <button type="button" className="text-xs text-muted-foreground underline-offset-2 hover:underline" onClick={() => logout.mutate()}>
+                  Log out
+                </button>
+              </div>
+            </>
           )}
-          <p className="mt-4 text-center text-xs text-muted-foreground">Cancel anytime from the billing portal. Prices exclude VAT where applicable.</p>
         </div>
       </div>
     </div>
   );
 }
 
-function PlanButton({ name, price, note, badge, highlighted, onClick, disabled }: { name: string; price: string; note: string; badge?: string; highlighted?: boolean; onClick: () => void; disabled?: boolean }) {
+export function PlanButton({ name, price, note, badge, highlighted, onClick, disabled }: { name: string; price: string; note: string; badge?: string; highlighted?: boolean; onClick: () => void; disabled?: boolean }) {
   return (
     <button
       type="button"

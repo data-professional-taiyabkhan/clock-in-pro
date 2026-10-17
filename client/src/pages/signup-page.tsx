@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
@@ -39,6 +40,7 @@ export default function SignupPage() {
     defaultValues: { orgName: "", slug: "", email: "", password: "", confirmPassword: "", firstName: "", lastName: "" },
   });
   const slug = watch("slug");
+  const [plan, setPlan] = useState<"monthly" | "annual">("monthly");
 
   const signupMutation = useMutation({
     mutationFn: async (data: SignupData) => apiRequest("/api/signup", { method: "POST", body: data }),
@@ -72,7 +74,7 @@ export default function SignupPage() {
         </p>
       }
     >
-      <form onSubmit={handleSubmit((d) => signupMutation.mutate(d))} className="space-y-4">
+      <form onSubmit={handleSubmit((d) => signupMutation.mutate({ ...d, plan }))} className="space-y-4">
         <Field label="Organisation name" error={errors.orgName?.message}>
           <Input
             className={inputCls}
@@ -122,6 +124,23 @@ export default function SignupPage() {
           <Field label="Confirm password" error={errors.confirmPassword?.message}>
             <Input className={inputCls} type="password" autoComplete="new-password" placeholder="Repeat password" {...register("confirmPassword", { required: "Please confirm your password" })} />
           </Field>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Plan after your free month</Label>
+          <div className="grid grid-cols-2 gap-3">
+            {(["monthly", "annual"] as const).map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setPlan(p)}
+                className={`rounded-xl border p-3 text-left transition-colors ${plan === p ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-input hover:border-primary/40"}`}
+              >
+                <p className="text-sm font-semibold capitalize">{p}{p === "annual" && <span className="ml-2 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">Save 14%</span>}</p>
+                <p className="text-xs text-muted-foreground">{p === "monthly" ? "£3.50 per employee / month" : "£3.00 per employee / month, billed yearly"}</p>
+              </button>
+            ))}
+          </div>
         </div>
 
         <Button type="submit" className="brand-gradient h-11 w-full rounded-xl text-white shadow-glow hover:opacity-95" disabled={signupMutation.isPending}>
