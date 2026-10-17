@@ -8,6 +8,7 @@ import {
   boolean,
   json,
   real,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -33,9 +34,54 @@ export const organizations = pgTable("organizations", {
   // Face/biometric settings
   faceEnabled: boolean("face_enabled").default(true),
   faceRetentionDays: integer("face_retention_days").default(365),
+  // Branding for the employee login page (/org/:slug) and in-app header
+  logoUrl: text("logo_url"), // data URI, max ~600KB
+  brandColor: varchar("brand_color"), // #rrggbb
+  wallpaperUrl: text("wallpaper_url"), // data URI, max ~2.5MB
+  wallpaperPreset: varchar("wallpaper_preset"), // aurora | ocean | sunset | forest | graphite | rose
+  welcomeTitle: varchar("welcome_title"),
+  welcomeMessage: text("welcome_message"),
+  // Scheduling / lateness
+  latenessGraceMinutes: integer("lateness_grace_minutes").default(5),
+  timezone: varchar("timezone").default("Europe/London"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+export const WALLPAPER_PRESET_IDS = ["aurora", "ocean", "sunset", "forest", "graphite", "rose"] as const;
+
+const dataUriImage = (maxBytes: number) =>
+  z
+    .string()
+    .regex(/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/, "Must be a PNG, JPEG, WebP or GIF image")
+    .refine((v) => v.length <= Math.ceil((maxBytes * 4) / 3) + 64, `Image must be under ${Math.round(maxBytes / 1024)}KB`);
+
+export const organizationBrandingSchema = z.object({
+  logoUrl: dataUriImage(600 * 1024).nullable().optional(),
+  brandColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Colour must be a hex value like #4f46e5").nullable().optional(),
+  wallpaperUrl: dataUriImage(2500 * 1024).nullable().optional(),
+  wallpaperPreset: z.enum(WALLPAPER_PRESET_IDS).nullable().optional(),
+  welcomeTitle: z.string().trim().max(80).nullable().optional(),
+  welcomeMessage: z.string().trim().max(240).nullable().optional(),
+});
+export type OrganizationBranding = z.infer<typeof organizationBrandingSchema>;
+
+export const organizationSettingsSchema = z.object({
+  name: z.string().trim().min(2).max(80).optional(),
+  latenessGraceMinutes: z.number().int().min(0).max(240).optional(),
+  timezone: z
+    .string()
+    .refine((tz) => {
+      try {
+        new Intl.DateTimeFormat("en-GB", { timeZone: tz });
+        return true;
+      } catch {
+        return false;
+      }
+    }, "Unknown timezone")
+    .optional(),
+});
+export type OrganizationSettings = z.infer<typeof organizationSettingsSchema>;
 
 // ──────────────────────────────────────────────
 // Users
@@ -207,6 +253,49 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
   usedAt: timestamp("used_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+// ──────────────────────────────────────────────
+// Shift templates (weekly contracts) — one row per employee per weekday
+// ──────────────────────────────────────────────
+export const shiftTemplates = pgTable(
+  "shift_templates",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id").notNull().references(() => organizations.id),
+    userId: integer("user_id").notNull().references(() => users.id),
+    dayOfWeek: integer("day_of_week").notNull(), // 0 = Sunday … 6 = Saturday
+    startTime: varchar("start_time").notNull(), // "HH:MM" local time
+    endTime: varchar("end_time").notNull(), // "HH:MM" local time; <= start means it ends next day
+    locationId: integer("location_id").references(() => locations.id),
+    effectiveFrom: varchar("effective_from"), // "YYYY-MM-DD" or null
+    effectiveTo: varchar("effective_to"), // "YYYY-MM-DD" or null
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (t) => [uniqueIndex("shift_templates_user_day_idx").on(t.userId, t.dayOfWeek)]
+);
+
+// ──────────────────────────────────────────────
+// Shifts — one-off shifts and overrides for a specific date
+// ──────────────────────────────────────────────
+export const shifts = pgTable(
+  "shifts",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id").notNull().references(() => organizations.id),
+    userId: integer("user_id").notNull().references(() => users.id),
+    date: varchar("date").notNull(), // "YYYY-MM-DD" in the organisation's timezone
+    startTime: varchar("start_time").notNull(),
+    endTime: varchar("end_time").notNull(),
+    locationId: integer("location_id").references(() => locations.id),
+    status: varchar("status").notNull().default("scheduled"), // scheduled | cancelled
+    notes: text("notes"),
+    createdBy: integer("created_by").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (t) => [uniqueIndex("shifts_user_date_idx").on(t.userId, t.date)]
+);
 
 // ══════════════════════════════════════════════
 // RELATIONS
@@ -437,6 +526,7 @@ export const signupSchema = z.object({
   confirmPassword: z.string().min(8),
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
+  plan: z.enum(["monthly", "annual"]).optional(),
 }).refine(data => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
@@ -506,3 +596,39 @@ export type SetupPinData = z.infer<typeof setupPinSchema>;
 export type VerifyPinData = z.infer<typeof verifyPinSchema>;
 export type ConsentData = z.infer<typeof consentSchema>;
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
+// ══════════════════════════════════════════════
+// SCHEDULING SCHEMAS
+// ══════════════════════════════════════════════
+
+export const timeHHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Time must be HH:MM");
+export const dateKey = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD");
+
+export const contractDaySchema = z.object({
+  dayOfWeek: z.number().int().min(0).max(6),
+  startTime: timeHHMM,
+  endTime: timeHHMM,
+  locationId: z.number().int().positive().nullable().optional(),
+});
+
+export const weeklyContractSchema = z.object({
+  days: z.array(contractDaySchema).max(7),
+  effectiveFrom: dateKey.nullable().optional(),
+  effectiveTo: dateKey.nullable().optional(),
+}).refine((c) => new Set(c.days.map((d) => d.dayOfWeek)).size === c.days.length, { message: "Each weekday can only appear once", path: ["days"] });
+
+export const shiftUpsertSchema = z.object({
+  userId: z.number().int().positive(),
+  date: dateKey,
+  startTime: timeHHMM,
+  endTime: timeHHMM,
+  locationId: z.number().int().positive().nullable().optional(),
+  notes: z.string().trim().max(240).nullable().optional(),
+  status: z.enum(["scheduled", "cancelled"]).optional(),
+});
+
+export type ShiftTemplate = typeof shiftTemplates.$inferSelect;
+export type InsertShiftTemplate = typeof shiftTemplates.$inferInsert;
+export type Shift = typeof shifts.$inferSelect;
+export type InsertShift = typeof shifts.$inferInsert;
+export type WeeklyContract = z.infer<typeof weeklyContractSchema>;
+export type ShiftUpsert = z.infer<typeof shiftUpsertSchema>;

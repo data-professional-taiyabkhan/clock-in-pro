@@ -1,10 +1,24 @@
 # Clock-In Pro
 
-Face-verified, geofenced attendance for UK SMBs with hourly staff. Stops buddy-punching. Ships in 2 weeks.
+Face-verified, geofenced attendance with rotas and lateness tracking for UK SMBs with hourly staff. Stops buddy-punching, flags late arrivals and no-shows, and bills per active employee after a free first month.
 
-Clock-In Pro lets employees clock in and out by looking at their webcam. The system matches their face against a registered embedding, verifies their GPS location is within an allowed geofence, and records the attendance event. Managers get real-time dashboards, attendance reports, and employee management — all behind a multi-tenant SaaS with Stripe billing and a 14-day free trial.
+Employees clock in and out by looking at their phone. The app matches their face against a registered descriptor, checks their GPS position against the sites they are assigned to, compares the clock-in with their scheduled shift, and records the event. Admins get a live overview (who is in, who is late, who has not turned up), a weekly rota built from contracts set once, a branded employee login link, and Stripe billing with a 30-day free month.
 
-**Live at:** [clockinpro.autostrata.ai](https://clockinpro.autostrata.ai)
+**Live at:** [clockinpro.autostrata.ai](https://clockinpro.autostrata.ai) · **Launching?** Follow [`LAUNCH.md`](LAUNCH.md).
+
+---
+
+## What's in the box
+
+| Area | What it does |
+|---|---|
+| **Clock-in** | Face verification (on-device detection, server-side match) or a PIN. Geofenced to assigned sites; staff with no sites can clock in anywhere. |
+| **Rota** | Weekly contracts per employee set once (e.g. 08:00–12:00 Mon–Thu and Sat), one-off shifts, cancellations, overnight shifts. |
+| **Lateness** | Admin-set grace period. Late, no-show, left-early and on-shift status on the overview, the rota and every attendance row. |
+| **Branding** | Each organisation's login link (`/org/<slug>`) carries its logo, colour, wallpaper and welcome text; the logo also shows in the employee app. |
+| **Billing** | Card at signup via Stripe Checkout, 30 days free, then £3.50 (monthly) or £3.00 (annual) per active employee. Admin seats free. Seat count synced automatically. |
+| **People** | Add employees with a one-time password or invite by email. Deactivate (keeps history, frees the seat) or delete permanently. |
+| **Theme** | Light and dark with a toggle; one token palette across marketing pages and dashboards. |
 
 ---
 
@@ -23,6 +37,8 @@ Clock-In Pro lets employees clock in and out by looking at their webcam. The sys
 | **Billing** | Stripe (Checkout, Customer Portal, Webhooks) |
 | **Face Detection** | face-api.js (browser-side) |
 | **Face Matching** | Euclidean distance on raw face-api.js descriptors (server-side, threshold 0.6) |
+| **Scheduling** | `server/lib/scheduling.ts` + `server/lib/time.ts` (DST-safe, org timezone) |
+| **Theme** | Tailwind tokens (HSL), next-themes light/dark |
 | **Deployment** | Railway (Nixpacks) |
 
 ---
@@ -98,6 +114,9 @@ RESEND_FROM_EMAIL=noreply@yourdomain.com
 
 # Face matching (optional — max descriptor distance to accept, default 0.6)
 FACE_MATCH_THRESHOLD=0.6
+
+# Public URL used in emails and Stripe redirects
+APP_URL=https://clockinpro.autostrata.ai
 ```
 
 ### 3. Push the database schema
@@ -150,19 +169,33 @@ Every tenant-scoped table has an `organizationId` (or `organisationId` — both 
 
 - **Session-based** via `express-session` + `passport-local`.
 - Passwords hashed with `bcryptjs`.
-- Role helpers exported from `server/auth.ts`: `requireAuth`, `requireManager`, `requireAdmin`.
+- Two roles: `admin` (free seat, runs the organisation) and `employee` (billed seat, clocks in). Helpers in `server/auth.ts`: `requireAuth`, `requireAdmin`.
 
 ---
 
-## Trial & Billing
+## Free month & billing
 
-- **14-day free trial** starts on organisation creation (`organizations.trialEndsAt`).
-- **Entitlement gating** via `server/middleware/entitlement.ts` — blocks API routes unless the trial is active OR a paying Stripe subscription exists.
-- **Pricing:**
-  - **Monthly:** £3.50 per employee per month
-  - **Annual:** £3.00 per employee per month (billed annually)
-  - Admin and manager seats are **free** — only employee seats are billable.
-- **Stripe integration:** Checkout, Customer Portal, and Webhooks (with idempotency via `webhook_events` table) in `server/routes/billing.routes.ts`.
+- **Card at signup.** `POST /api/signup` creates the organisation with a 30-day free month and returns a Stripe Checkout URL (subscription mode, trial until the free month ends, card required). Nothing is charged until day 31; cancelling before then costs nothing.
+- **Entitlement gating** in `server/middleware/entitlement.ts` runs before every API route: an organisation is active during its free month or while its subscription is `active`, `trialing` or `past_due` (Stripe is retrying the card). `canceled`/`unpaid` locks the organisation; admins see plan buttons, employees see "ask your admin".
+- **Pricing:** £3.50 per active employee per month, or £3.00 on the annual plan. Admin seats are free. The seat count syncs to Stripe whenever employees change and once a day.
+- **Stripe integration** lives in `server/lib/billing.ts` (checkout, portal, status, subscription mirroring) and `server/routes/billing.routes.ts` (webhooks with idempotency via `webhook_events`). Required webhook events are listed in `LAUNCH.md`.
+- **Emails** (`server/lib/email.ts`, via Resend): invitation, password reset, free-month-ending reminder, trial-ending with the exact upcoming charge, payment failed.
+
+---
+
+## Scheduling & lateness
+
+- A **weekly contract** is one `shift_templates` row per weekday per employee, with optional effective dates and a site. Admins set it once in the Rota tab; it repeats every week.
+- A **shift** row for a specific date overrides the contract for that date (different hours, a one-off shift on a day off, or `cancelled`).
+- Shift times are wall-clock times in the organisation's timezone (`organizations.timezone`, default `Europe/London`). Attendance date keys are derived in that timezone, so a 00:30 BST clock-in belongs to the right day.
+- **Lateness**: clock-in later than shift start + `organizations.latenessGraceMinutes` → `late +N`. No clock-in after start + grace → `no_show`. Clock-out before end − grace → left early. Worked with no shift → `unscheduled`. Logic is pure and unit-tested in `server/lib/scheduling.ts`.
+- Endpoints: `/api/schedules/contracts`, `/api/schedules/shifts`, `/api/rota`, `/api/my-shifts`, `/api/dashboard/today`, and `/api/attendance` (each record annotated with its scheduled shift and verdict).
+
+---
+
+## Organisation branding
+
+Admins set a logo, brand colour, background (six gradients or an uploaded photo), headline and message in the Branding tab. Images are resized in the browser and stored as size-capped data URIs. `GET /api/org/:slug` serves the branding to the public login page; the brand colour overrides the theme's primary and gradient tokens on that page.
 
 ---
 
@@ -207,39 +240,47 @@ See [`STAGING_SETUP.md`](STAGING_SETUP.md) for full staging environment setup in
 ## Project Structure
 
 ```
-├── client/                  # React frontend (Vite)
-│   ├── public/models/       # face-api.js model weights
+├── client/
+│   ├── public/models/           # face-api.js model weights
 │   └── src/
-│       ├── components/      # UI components (shadcn/ui)
-│       ├── hooks/           # Custom React hooks
-│       ├── lib/             # Client utilities
-│       └── pages/           # Route pages
+│       ├── components/
+│       │   ├── brand/           # Logo
+│       │   ├── layout/          # MarketingLayout, AuthLayout (org branding), AppShell
+│       │   ├── ui/              # shadcn primitives + stat-card, empty-state, confirm-dialog…
+│       │   ├── advanced-face-training.tsx   # 3-pose face registration
+│       │   └── subscription-gate.tsx        # billing status hooks + lock screen
+│       ├── features/admin/      # one file per admin tab: overview, rota, employees, attendance,
+│       │                        # locations, assignments, invitations, branding, billing, settings
+│       ├── lib/                 # queryClient, face-recognition, dates, image, types
+│       └── pages/               # landing, pricing, login, signup, org-login, invite, dashboards, legal
 ├── server/
-│   ├── auth.ts              # Passport session auth
-│   ├── routes.ts            # Main API routes
-│   ├── storage.ts           # Database access layer
+│   ├── index.ts                 # sessions → entitlement gate → routes; background jobs
+│   ├── auth.ts                  # session middleware, requireAuth / requireAdmin
+│   ├── routes.ts                # core API (auth, employees, locations, clock-in, face)
+│   ├── routes/                  # billing, schedules, pin/consent, password
 │   ├── lib/
-│   │   └── face-descriptor.ts # Descriptor validation, centroid, distance, threshold
-│   ├── middleware/
-│   │   └── entitlement.ts   # Trial / subscription gating
-│   └── routes/
-│       └── billing.routes.ts # Stripe billing routes
-├── shared/                  # Shared types & schema (Drizzle)
-└── scripts/                 # DB verification & utilities
+│   │   ├── billing.ts           # Stripe helpers + billing status
+│   │   ├── scheduling.ts        # rota resolution + lateness (pure)
+│   │   ├── time.ts              # timezone helpers (pure)
+│   │   ├── face-descriptor.ts   # descriptor validation, centroid, distance, threshold
+│   │   └── email.ts             # Resend templates
+│   ├── middleware/entitlement.ts
+│   ├── jobs/                    # seat sync, trial reminder, auto clock-out
+│   └── storage.ts               # Drizzle data access
+├── shared/schema.ts             # Drizzle tables + zod validators
+└── LAUNCH.md                    # owner-only launch steps
 ```
 
 ---
 
 ## What's NOT in the Box
 
-Being upfront about current limitations:
-
-- **No SSO** — authentication is username/password only. No SAML, OIDC, or social login.
-- **No native mobile app** — the system is a responsive web app. No iOS/Android app in the stores.
-- **No on-premises deployment** — designed for Railway + Neon. Self-hosting is possible but unsupported.
-- **No offline mode** — requires an internet connection for every clock-in.
+- **No liveness / anti-spoofing** — a printed photo can pass face verification. Geofencing and PIN are the real controls.
+- **No SSO** — email and password only.
+- **No native mobile app** — responsive web app; works in the phone browser.
+- **No offline mode** — every clock-in needs a connection.
 - **No multi-language support** — English (UK) only.
-- **No audit log export** — attendance data is viewable in-app but there's no CSV/PDF export yet.
+- **No payroll export yet** — attendance and lateness are viewable in-app; CSV export is the obvious next step.
 
 ---
 

@@ -1,72 +1,47 @@
 /**
- * Syncs the active employee count to Stripe subscription quantity.
- * Called daily via setInterval and on-demand when employees are created/deleted.
+ * Keeps the Stripe subscription quantity equal to the number of active
+ * employees (role=employee, isActive=true). Admin seats are never billed.
+ * Runs daily and on demand whenever employees are added, removed or deactivated.
  */
 import { storage } from "../storage";
-
-async function getStripe() {
-    const Stripe = (await import("stripe")).default;
-    const key = process.env.STRIPE_SECRET_KEY;
-    if (!key) return null;
-    return new Stripe(key, { apiVersion: "2026-04-22.dahlia" as any });
-}
+import { ENTITLED_STATUSES, getStripe } from "../lib/billing";
 
 export async function syncBillingQuantity(organisationId: number): Promise<void> {
-    try {
-        const stripe = await getStripe();
-        if (!stripe) return; // Stripe not configured
+  try {
+    const stripe = await getStripe();
+    if (!stripe) return;
 
-        const sub = await storage.getSubscription(organisationId);
-        if (!sub || !["active", "trialing"].includes(sub.status)) return;
+    const sub = await storage.getSubscription(organisationId);
+    if (!sub || !ENTITLED_STATUSES.includes(sub.status)) return;
 
-        // Count active employees (role=employee, isActive=true) — admins/managers excluded
-        const count = await storage.getActiveEmployeeCount(organisationId);
-        const quantity = Math.max(1, count); // Stripe requires at least 1
+    const quantity = await storage.getActiveEmployeeCount(organisationId);
+    if (quantity === sub.activeEmployeeQuantity) return;
 
-        if (quantity === sub.activeEmployeeQuantity) return; // No change
+    const stripeSub = await stripe.subscriptions.retrieve(sub.stripeSubscriptionId);
+    const itemId = stripeSub.items.data[0]?.id;
+    if (!itemId) return;
 
-        // Update Stripe subscription quantity
-        const stripeSub = await stripe.subscriptions.retrieve(sub.stripeSubscriptionId);
-        const itemId = stripeSub.items.data[0]?.id;
-        if (!itemId) return;
-
-        await stripe.subscriptions.update(sub.stripeSubscriptionId, {
-            items: [{ id: itemId, quantity }],
-            proration_behavior: "create_prorations",
-        });
-
-        // Update local record
-        await storage.updateSubscription(sub.stripeSubscriptionId, {
-            activeEmployeeQuantity: quantity,
-        });
-
-        console.log(`Synced billing quantity for org ${organisationId}: ${quantity} employees`);
-    } catch (error) {
-        console.error(`Failed to sync billing quantity for org ${organisationId}:`, error);
-    }
+    await stripe.subscriptions.update(sub.stripeSubscriptionId, {
+      items: [{ id: itemId, quantity }],
+      proration_behavior: "create_prorations",
+    });
+    await storage.updateSubscription(sub.stripeSubscriptionId, { activeEmployeeQuantity: quantity });
+    console.log(`[billing] Synced seat count for org ${organisationId}: ${quantity}`);
+  } catch (error) {
+    console.error(`[billing] Failed to sync seat count for org ${organisationId}:`, error);
+  }
 }
 
-/**
- * Start the daily billing sync job. Iterates all orgs with active subscriptions.
- */
 export function startBillingSyncJob(): void {
-    const INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-    async function runSync() {
-        try {
-            const orgs = await storage.getAllOrganizations();
-            for (const org of orgs) {
-                await syncBillingQuantity(org.id);
-            }
-        } catch (error) {
-            console.error("Billing sync job error:", error);
-        }
+  const run = async () => {
+    try {
+      const orgs = await storage.getAllOrganizations();
+      for (const org of orgs) await syncBillingQuantity(org.id);
+    } catch (error) {
+      console.error("[billing] Seat sync job error:", error);
     }
-
-    // Run once at startup (delayed by 30 seconds to let server fully start)
-    setTimeout(runSync, 30_000);
-
-    // Then run every 24 hours
-    setInterval(runSync, INTERVAL_MS);
-    console.log("Billing quantity sync job scheduled (every 24h)");
+  };
+  setTimeout(run, 30_000);
+  setInterval(run, 24 * 60 * 60 * 1000);
+  console.log("Billing seat sync job scheduled (every 24h)");
 }

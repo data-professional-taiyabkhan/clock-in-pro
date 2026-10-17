@@ -4,6 +4,7 @@
  * Runs once daily. Targets orgs whose trialEndsAt is 2–3 days from now.
  */
 import { storage } from "../storage";
+import { ENTITLED_STATUSES } from "../lib/billing";
 import { sendTrialExpiringEmail } from "../lib/email";
 import { users } from "@shared/schema";
 import { db } from "../db";
@@ -40,7 +41,7 @@ async function runTrialExpiryReminder(): Promise<void> {
 
             // Skip orgs that already have an active subscription
             const sub = await storage.getSubscription(org.id);
-            if (sub && ["active", "trialing"].includes(sub.status)) continue;
+            if (sub && ENTITLED_STATUSES.includes(sub.status)) continue;
 
             // Find the admin user for this org
             const [admin] = await db

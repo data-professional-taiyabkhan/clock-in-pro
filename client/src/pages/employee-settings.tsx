@@ -170,12 +170,12 @@ export default function EmployeeSettings() {
                 <CardContent className="space-y-3">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                            <Camera className="h-5 w-5 text-blue-600" />
+                            <Camera className="h-5 w-5 text-primary" />
                             <span className="font-medium">Face Verification</span>
                         </div>
                         <div className="flex items-center gap-2">
                             {hasFaceData && hasConsent ? (
-                                <Badge className="bg-green-100 text-green-800">Active</Badge>
+                                <Badge className="border-transparent bg-success/10 text-success">Active</Badge>
                             ) : (
                                 <Badge variant="secondary">Inactive</Badge>
                             )}
@@ -198,11 +198,11 @@ export default function EmployeeSettings() {
                     </div>
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                            <KeyRound className="h-5 w-5 text-purple-600" />
+                            <KeyRound className="h-5 w-5 text-primary" />
                             <span className="font-medium">PIN Code</span>
                         </div>
                         {hasPin ? (
-                            <Badge className="bg-green-100 text-green-800">Active</Badge>
+                            <Badge className="border-transparent bg-success/10 text-success">Active</Badge>
                         ) : (
                             <Badge variant="secondary">Not set</Badge>
                         )}
@@ -301,7 +301,7 @@ export default function EmployeeSettings() {
             <Card>
                 <CardHeader className="pb-3">
                     <CardTitle className="text-lg flex items-center gap-2">
-                        {hasConsent ? <ShieldCheck className="h-5 w-5 text-green-600" /> : <ShieldOff className="h-5 w-5 text-amber-600" />}
+                        {hasConsent ? <ShieldCheck className="h-5 w-5 text-success" /> : <ShieldOff className="h-5 w-5 text-warning" />}
                         Biometric Consent
                     </CardTitle>
                     <CardDescription>
@@ -334,9 +334,9 @@ export default function EmployeeSettings() {
                         </div>
                     ) : (
                         <div className="space-y-4 max-w-lg">
-                            <div className="bg-slate-50 rounded-lg p-4 text-sm space-y-2 border">
+                            <div className="bg-muted/40 rounded-lg p-4 text-sm space-y-2 border">
                                 <h4 className="font-semibold">Biometric Data Policy (v1.0)</h4>
-                                <ul className="list-disc list-inside space-y-1 text-slate-700">
+                                <ul className="list-disc list-inside space-y-1 text-foreground/80">
                                     <li>Your face image will be captured and stored securely on encrypted servers.</li>
                                     <li>Face data is used <b>only</b> for clock-in/out verification — never shared or sold.</li>
                                     <li>You can <b>withdraw consent</b> and <b>delete all face data</b> at any time.</li>
@@ -361,9 +361,9 @@ export default function EmployeeSettings() {
             {(hasFaceData || hasConsent) && (
                 <>
                     <Separator />
-                    <Card className="border-red-200">
+                    <Card className="border-destructive/40">
                         <CardHeader className="pb-3">
-                            <CardTitle className="text-lg flex items-center gap-2 text-red-700">
+                            <CardTitle className="text-lg flex items-center gap-2 text-destructive">
                                 <Trash2 className="h-5 w-5" /> Delete Face Data
                             </CardTitle>
                             <CardDescription>

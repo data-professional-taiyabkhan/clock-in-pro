@@ -1,8 +1,12 @@
+import { useEffect } from "react";
 import { Route, Switch } from "wouter";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
 import { useToast } from "@/hooks/use-toast";
+import { ThemeProvider } from "@/components/theme-provider";
+import { SubscriptionGate } from "@/components/subscription-gate";
+import { StagingBanner } from "@/components/staging-banner";
 import LandingPage from "@/pages/landing-page";
 import LoginPage from "@/pages/login-page";
 import OrgLoginPage from "@/pages/org-login-page";
@@ -16,70 +20,48 @@ import TermsPage from "@/pages/terms-page";
 import EmployeeDashboard from "@/pages/employee-dashboard";
 import AdminDashboard from "@/pages/admin-dashboard";
 import NotFound from "@/pages/not-found";
-import { SubscriptionGate } from "@/components/subscription-gate";
-import { StagingBanner } from "@/components/staging-banner";
-import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import InvitePage from "@/pages/invite-page";
+import { Loader2 } from "lucide-react";
 
-/**
- * Handle ?billing=success|cancelled after Stripe checkout redirect.
- * Shows a toast and forces billing status re-check.
- */
+/** Handle ?billing=success|cancelled after a Stripe redirect. */
 function useBillingRedirect() {
   const { toast } = useToast();
-
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const billing = params.get("billing");
-
     if (billing === "success") {
-      toast({
-        title: "🎉 Subscription activated!",
-        description: "Your payment was successful. Welcome to Clock-In Pro!",
-      });
-      // Force re-check billing status immediately
+      toast({ title: "You're all set", description: "Your card is on file. Nothing is charged until your free month ends." });
       queryClient.invalidateQueries({ queryKey: ["/api/billing/status"] });
-      // Clean URL
       window.history.replaceState({}, "", "/");
     } else if (billing === "cancelled") {
-      toast({
-        title: "Payment cancelled",
-        description: "You can subscribe any time from your dashboard.",
-        variant: "destructive",
-      });
+      toast({ title: "Card not added", description: "You can add a card any time from Billing in your dashboard.", variant: "destructive" });
       window.history.replaceState({}, "", "/");
     }
   }, [toast]);
 }
 
 function Router() {
-  const { data: user, isLoading } = useQuery({
-    queryKey: ["/api/user"],
-    retry: false,
-  });
-
+  const { data: user, isLoading } = useQuery<any>({ queryKey: ["/api/user"], retry: false });
   useBillingRedirect();
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-gray-900"></div>
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
 
   return (
     <Switch>
-      {/* Public marketing pages (always accessible) */}
       <Route path="/pricing" component={PricingPage} />
       <Route path="/security" component={SecurityPage} />
       <Route path="/privacy" component={PrivacyPage} />
       <Route path="/terms" component={TermsPage} />
       <Route path="/forgot-password" component={ForgotPasswordPage} />
       <Route path="/reset-password" component={ResetPasswordPage} />
-
-      {/* Org-specific employee login (always accessible) */}
       <Route path="/org/:slug" component={OrgLoginPage} />
+      <Route path="/invite/:token" component={InvitePage} />
 
       {!user ? (
         <>
@@ -89,19 +71,12 @@ function Router() {
         </>
       ) : (
         <>
-          <Route path="/" component={() => {
-            const userRole = (user as any)?.role;
-
-            return (
-              <SubscriptionGate>
-                {userRole === "admin" ? (
-                  <AdminDashboard />
-                ) : (
-                  <EmployeeDashboard />
-                )}
-              </SubscriptionGate>
-            );
-          }} />
+          <Route path="/">
+            <SubscriptionGate>{user.role === "admin" ? <AdminDashboard /> : <EmployeeDashboard />}</SubscriptionGate>
+          </Route>
+          <Route path="/login">
+            <SubscriptionGate>{user.role === "admin" ? <AdminDashboard /> : <EmployeeDashboard />}</SubscriptionGate>
+          </Route>
         </>
       )}
       <Route component={NotFound} />
@@ -109,14 +84,14 @@ function Router() {
   );
 }
 
-function App() {
+export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <StagingBanner />
-      <Router />
-      <Toaster />
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <StagingBanner />
+        <Router />
+        <Toaster />
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }
-
-export default App;

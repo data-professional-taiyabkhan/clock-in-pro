@@ -1,9 +1,9 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { setupAuth, requireAuth, requireAdmin, hashPassword, comparePasswords } from "./auth";
+import { requireAuth, requireAdmin, hashPassword, comparePasswords } from "./auth";
 import { storage } from "./storage";
-import { insertAttendanceRecordSchema, insertLocationSchema, loginSchema, registerSchema, insertOrganizationSchema, setupPinSchema, verifyPinSchema, signupSchema, users, employeeInvitations, locations, employeeLocations } from "@shared/schema";
-import type { User } from "@shared/schema";
+import { insertAttendanceRecordSchema, insertLocationSchema, loginSchema, registerSchema, insertOrganizationSchema, setupPinSchema, verifyPinSchema, signupSchema, organizationBrandingSchema, organizationSettingsSchema, users, employeeInvitations, locations, employeeLocations } from "@shared/schema";
+import type { User, Organization } from "@shared/schema";
 import { z } from "zod";
 import { desc, eq, and } from "drizzle-orm";
 import { db } from "./db";
@@ -18,6 +18,10 @@ import { sendInvitationEmail } from "./lib/email";
 // Face recognition & image storage (local implementations)
 import { uploadFaceImage, getSignedFaceImageUrl, downloadFaceImageAsBase64 } from "./lib/face-image-storage";
 import { analyzeFaceQuality } from "./lib/face-recognition";
+import { syncBillingQuantity } from "./jobs/sync-billing-quantity";
+import { TRIAL_DAYS, createCheckoutSession } from "./lib/billing";
+import { todayKeyForOrg, DEFAULT_TZ } from "./lib/time";
+import { annotateRecords } from "./lib/scheduling";
 import {
   DESCRIPTOR_LENGTH,
   euclideanDistance,
@@ -27,6 +31,28 @@ import {
 } from "./lib/face-descriptor";
 
 const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
+
+/** Public, non-sensitive organisation fields (safe for the unauthenticated login page). */
+function publicOrg(org: Organization) {
+  return {
+    id: org.id,
+    name: org.name,
+    slug: org.slug,
+    logoUrl: org.logoUrl ?? null,
+    brandColor: org.brandColor ?? null,
+    wallpaperUrl: org.wallpaperUrl ?? null,
+    wallpaperPreset: org.wallpaperPreset ?? null,
+    welcomeTitle: org.welcomeTitle ?? null,
+    welcomeMessage: org.welcomeMessage ?? null,
+  };
+}
+
+/** Readable one-time password: 12 chars, no ambiguous characters. */
+function generateTempPassword(): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const bytes = crypto.randomBytes(12);
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
+}
 
 function toSafeUser(user: User) {
   const { password: _password, faceEmbedding: _faceEmbedding, pinHash: _pinHash, ...rest } = user;
@@ -80,7 +106,6 @@ async function performLivenessDetection(_imageData: string): Promise<{
 }
 
 export function registerRoutes(app: Express): Server {
-  setupAuth(app);
 
   // ── Health check (Railway / uptime monitors) ──────────────────────────────
   app.get("/api/health", (_req, res) => {
@@ -165,12 +190,12 @@ export function registerRoutes(app: Express): Server {
     });
   });
 
-  // ── Public: look up organisation by slug (for employee login page) ──
+  // ── Public: organisation branding for the employee login page ──
   app.get("/api/org/:slug", async (req, res) => {
     try {
       const org = await storage.getOrganizationBySlug(req.params.slug);
-      if (!org) return res.status(404).json({ message: "Organisation not found" });
-      res.json({ id: org.id, name: org.name, slug: org.slug });
+      if (!org || org.isActive === false) return res.status(404).json({ message: "Organisation not found" });
+      res.json(publicOrg(org));
     } catch {
       res.status(500).json({ message: "Server error" });
     }
@@ -193,9 +218,9 @@ export function registerRoutes(app: Express): Server {
         return res.status(400).json({ message: "An account with this email already exists" });
       }
 
-      // Create organisation with 14-day trial
+      // Create organisation with a 30-day free month
       const trialEnd = new Date();
-      trialEnd.setDate(trialEnd.getDate() + 14);
+      trialEnd.setDate(trialEnd.getDate() + TRIAL_DAYS);
 
       const org = await storage.createOrganization({
         name: data.orgName,
@@ -222,9 +247,20 @@ export function registerRoutes(app: Express): Server {
       // Auto-login
       (req.session as any).userId = adminUser.id;
 
+      // Collect a card now so billing starts automatically on day 31.
+      // If Stripe is not configured (local dev) or errors, signup still succeeds.
+      let checkoutUrl: string | null = null;
+      try {
+        const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+        checkoutUrl = await createCheckoutSession({ org, admin: adminUser, plan: data.plan ?? "monthly", baseUrl });
+      } catch (billingError) {
+        console.error("Signup checkout session failed (continuing without card):", billingError);
+      }
+
       res.json({
         user: toSafeUser(adminUser),
         organization: { id: org.id, name: org.name, slug: org.slug, trialEndsAt: org.trialEndsAt },
+        checkoutUrl,
       });
     } catch (error) {
       console.error("Signup error:", error);
@@ -250,9 +286,46 @@ export function registerRoutes(app: Express): Server {
       if (!req.user!.organizationId!) return res.status(404).json({ message: "No organisation" });
       const org = await storage.getOrganization(req.user!.organizationId!);
       if (!org) return res.status(404).json({ message: "Organisation not found" });
-      res.json({ id: org.id, name: org.name, slug: org.slug });
+      res.json({ ...publicOrg(org), latenessGraceMinutes: org.latenessGraceMinutes ?? 5, timezone: org.timezone ?? "Europe/London", trialEndsAt: org.trialEndsAt });
     } catch {
       res.status(500).json({ message: "Server error" });
+    }
+  });
+
+  // ── Admin: update branding of the employee login page ──
+  app.put("/api/organization/branding", requireAdmin, async (req, res) => {
+    try {
+      const data = organizationBrandingSchema.parse(req.body ?? {});
+      const updates: Record<string, unknown> = {};
+      for (const key of ["logoUrl", "brandColor", "wallpaperUrl", "wallpaperPreset", "welcomeTitle", "welcomeMessage"] as const) {
+        if (key in data) updates[key] = data[key] === "" ? null : data[key];
+      }
+      // A custom wallpaper replaces a preset and vice versa
+      if (updates.wallpaperUrl) updates.wallpaperPreset = null;
+      if (updates.wallpaperPreset) updates.wallpaperUrl = null;
+      const org = await storage.updateOrganization(req.user!.organizationId!, updates);
+      res.json(publicOrg(org));
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: error.errors[0]?.message || "Invalid branding", errors: error.errors });
+      }
+      console.error("Branding update error:", error);
+      res.status(500).json({ message: "Failed to update branding" });
+    }
+  });
+
+  // ── Admin: organisation settings (name, lateness grace, timezone) ──
+  app.put("/api/organization/settings", requireAdmin, async (req, res) => {
+    try {
+      const data = organizationSettingsSchema.parse(req.body ?? {});
+      const org = await storage.updateOrganization(req.user!.organizationId!, data);
+      res.json({ ...publicOrg(org), latenessGraceMinutes: org.latenessGraceMinutes ?? 5, timezone: org.timezone ?? "Europe/London" });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: error.errors[0]?.message || "Invalid settings", errors: error.errors });
+      }
+      console.error("Settings update error:", error);
+      res.status(500).json({ message: "Failed to update settings" });
     }
   });
 
@@ -372,7 +445,7 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/employees/:id/face-image", requireAuth, async (req, res) => {
     try {
       // Check if user is manager or admin
-      if (req.user!.role !== 'manager' && req.user!.role !== 'admin') {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Manager or Admin access required" });
       }
 
@@ -865,7 +938,7 @@ export function registerRoutes(app: Express): Server {
 
           let attendanceRecord;
           if (action === 'out') {
-            const today = new Date().toISOString().split('T')[0];
+            const today = await todayKeyForOrg(req.user!.organizationId);
             const todayRecord = await storage.getTodayAttendanceRecord(req.user!.id, today);
             if (!todayRecord || todayRecord.clockOutTime) {
               return res.status(400).json({
@@ -880,7 +953,7 @@ export function registerRoutes(app: Express): Server {
               userId: req.user!.id,
               organizationId: req.user!.organizationId!,
               clockInTime: new Date(),
-              date: new Date().toISOString().split('T')[0],
+              date: await todayKeyForOrg(req.user!.organizationId),
             });
           }
 
@@ -1053,7 +1126,7 @@ export function registerRoutes(app: Express): Server {
         // Create attendance record based on action
         let attendanceRecord;
         if (action === 'out') {
-          const today = new Date().toISOString().split('T')[0];
+          const today = await todayKeyForOrg(req.user!.organizationId);
           const todayRecord = await storage.getTodayAttendanceRecord(req.user!.id, today);
 
           if (!todayRecord || todayRecord.clockOutTime) {
@@ -1071,7 +1144,7 @@ export function registerRoutes(app: Express): Server {
             userId: req.user!.id,
             organizationId: req.user!.organizationId!,
             clockInTime: new Date(),
-            date: new Date().toISOString().split('T')[0],
+            date: await todayKeyForOrg(req.user!.organizationId),
             checkInMethod: 'pin'
           });
         }
@@ -1092,7 +1165,7 @@ export function registerRoutes(app: Express): Server {
   // Audit logging endpoints for managers/admins
   app.get("/api/audit-logs", requireAuth, async (req, res) => {
     try {
-      if (!['manager', 'admin'].includes(req.user!.role)) {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Access denied" });
       }
 
@@ -1120,7 +1193,7 @@ export function registerRoutes(app: Express): Server {
 
   app.get("/api/audit-logs/:userId", requireAuth, async (req, res) => {
     try {
-      if (!['manager', 'admin'].includes(req.user!.role)) {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Access denied" });
       }
 
@@ -1143,7 +1216,7 @@ export function registerRoutes(app: Express): Server {
 
   app.get("/api/security-alerts", requireAuth, async (req, res) => {
     try {
-      if (!['manager', 'admin'].includes(req.user!.role)) {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Access denied" });
       }
 
@@ -1159,7 +1232,7 @@ export function registerRoutes(app: Express): Server {
   // Anomaly detection endpoints
   app.get("/api/anomalies", requireAuth, async (req, res) => {
     try {
-      if (!['manager', 'admin'].includes(req.user!.role)) {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Access denied" });
       }
 
@@ -1175,7 +1248,7 @@ export function registerRoutes(app: Express): Server {
 
   app.get("/api/security-metrics", requireAuth, async (req, res) => {
     try {
-      if (!['manager', 'admin'].includes(req.user!.role)) {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Access denied" });
       }
 
@@ -1254,7 +1327,7 @@ export function registerRoutes(app: Express): Server {
         return res.status(400).json({ message: "Face verification required for check-in" });
       }
 
-      const today = format(new Date(), "yyyy-MM-dd");
+      const today = await todayKeyForOrg(req.user!.organizationId);
 
       // Check if user has any active (unclosed) sessions today
       const records = await storage.getUserAttendanceRecords(req.user!.id, 20);
@@ -1290,7 +1363,7 @@ export function registerRoutes(app: Express): Server {
 
   app.post("/api/clock-out", requireAuth, async (req, res) => {
     try {
-      const today = format(new Date(), "yyyy-MM-dd");
+      const today = await todayKeyForOrg(req.user!.organizationId);
 
       // Get all attendance records and find the most recent one without clock-out
       const records = await storage.getUserAttendanceRecords(req.user!.id, 20);
@@ -1358,7 +1431,7 @@ export function registerRoutes(app: Express): Server {
         return res.status(400).json({ message: "User ID is required" });
       }
 
-      const today = format(new Date(), "yyyy-MM-dd");
+      const today = await todayKeyForOrg(req.user!.organizationId);
 
       // Find the most recent active record for the user
       const records = await storage.getUserAttendanceRecords(userId, 20);
@@ -1404,8 +1477,22 @@ export function registerRoutes(app: Express): Server {
         // Employees see only their own records
         records = await storage.getUserAttendanceRecords(req.user!.id, 30);
       } else {
-        // Managers and admins see all records from their organization
+        // Admins see all records from their organization
         records = await storage.getAllAttendanceRecords(100, req.user!.organizationId!);
+      }
+
+      // Attach scheduled shift + lateness verdict to each record
+      if (records.length > 0) {
+        const orgId = req.user!.organizationId!;
+        const org = await storage.getOrganization(orgId);
+        const tz = org?.timezone || DEFAULT_TZ;
+        const grace = org?.latenessGraceMinutes ?? 5;
+        const dates = records.map((r) => r.date).sort();
+        const [templates, overrides] = await Promise.all([
+          req.user!.role === "employee" ? storage.getShiftTemplatesForUser(req.user!.id) : storage.getShiftTemplatesForOrg(orgId),
+          req.user!.role === "employee" ? storage.getShiftsForUser(req.user!.id, dates[0], dates[dates.length - 1]) : storage.getShiftsForOrg(orgId, dates[0], dates[dates.length - 1]),
+        ]);
+        return res.json(annotateRecords(records, templates, overrides, grace, tz));
       }
 
       res.json(records);
@@ -1461,7 +1548,7 @@ export function registerRoutes(app: Express): Server {
         }, 0);
 
         // Calculate today's status using single source of truth
-        const today = format(new Date(), "yyyy-MM-dd");
+        const today = await todayKeyForOrg(req.user!.organizationId);
         const todayRecords = records.filter(record => record.date === today);
 
         // Use the global active record check
@@ -1778,7 +1865,7 @@ export function registerRoutes(app: Express): Server {
 
   app.get("/api/attendance/today", requireAuth, async (req, res) => {
     try {
-      const today = format(new Date(), "yyyy-MM-dd");
+      const today = await todayKeyForOrg(req.user!.organizationId);
 
       // Get all records for today
       const records = await storage.getUserAttendanceRecords(req.user!.id, 10);
@@ -1806,64 +1893,11 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // Delete user with role-based permissions
-  app.delete("/api/users/:id", requireAuth, async (req, res) => {
-    try {
-      const userId = parseInt(req.params.id);
-
-      if (isNaN(userId)) {
-        return res.status(400).json({ message: "Invalid user ID" });
-      }
-
-      // Check if user exists
-      const targetUser = await storage.getUser(userId);
-      if (!targetUser) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      // Prevent deleting yourself
-      if (userId === req.user!.id) {
-        return res.status(400).json({ message: "Cannot delete your own account" });
-      }
-
-      // Role-based deletion permissions
-      const currentUserRole = req.user!.role;
-      const targetUserRole = targetUser.role;
-
-      // No one can delete admin
-      if (targetUserRole === "admin") {
-        return res.status(403).json({ message: "Cannot delete admin users" });
-      }
-
-      // Only admin can delete managers
-      if (targetUserRole === "manager" && currentUserRole !== "admin") {
-        return res.status(403).json({ message: "Only admin can delete managers" });
-      }
-
-      // Managers can only delete employees, admins can delete anyone (except admin)
-      if (currentUserRole === "manager" && targetUserRole !== "employee") {
-        return res.status(403).json({ message: "Managers can only delete employees" });
-      }
-
-      // Employees cannot delete anyone
-      if (currentUserRole === "employee") {
-        return res.status(403).json({ message: "Employees cannot delete users" });
-      }
-
-      await storage.deleteUser(userId);
-      console.log(`User ${targetUser.email} (${targetUserRole}) deleted by ${req.user!.email} (${currentUserRole})`);
-      res.json({ message: "User deleted successfully" });
-    } catch (error) {
-      console.error("Delete user error:", error);
-      res.status(500).json({ message: "Failed to delete user" });
-    }
-  });
-
-  // Employee management (Manager/Admin only)
+  // Employee management (admin only)
   app.get("/api/employees", requireAuth, async (req, res) => {
     try {
       // Check if user is manager or admin
-      if (req.user!.role !== 'manager' && req.user!.role !== 'admin') {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Manager access required" });
       }
 
@@ -1881,7 +1915,7 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/employees", requireAuth, async (req, res) => {
     try {
       // Check if user is manager or admin
-      if (req.user!.role !== 'manager' && req.user!.role !== 'admin') {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Manager access required" });
       }
 
@@ -1892,9 +1926,8 @@ export function registerRoutes(app: Express): Server {
         return res.status(400).json({ message: "First name, last name, and email are required" });
       }
 
-      // Role-based permissions: only admin can create managers
-      if (role === 'manager' && req.user!.role !== 'admin') {
-        return res.status(403).json({ message: "Only admin can create manager accounts" });
+      if (role && !["employee", "admin"].includes(role)) {
+        return res.status(400).json({ message: "Role must be employee or admin" });
       }
 
       // Check if user already exists in this organization
@@ -1903,8 +1936,8 @@ export function registerRoutes(app: Express): Server {
         return res.status(400).json({ message: "User with this email already exists in this organization" });
       }
 
-      // Create default password (can be changed later)
-      const defaultPassword = "password123";
+      // One-time temporary password, shown to the admin once; the employee should change it after signing in
+      const defaultPassword = generateTempPassword();
       const hashedPassword = await hashPassword(defaultPassword);
 
       // Create the employee directly with organization ID
@@ -1920,10 +1953,12 @@ export function registerRoutes(app: Express): Server {
         faceEmbedding: null
       });
 
+      if ((role || "employee") === "employee") syncBillingQuantity(req.user!.organizationId!).catch(console.error);
+
       res.json({
         message: "Employee created successfully",
         user: toSafeUser(newUser),
-        defaultPassword: defaultPassword,
+        defaultPassword,
         note: "Employee can change password after first login"
       });
     } catch (error) {
@@ -1932,36 +1967,45 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  app.delete("/api/employees/:id", requireAuth, async (req, res) => {
+  // Deactivate / reactivate an employee. Deactivating keeps attendance history,
+  // blocks sign-in, frees the billed seat and wipes face + PIN data.
+  app.patch("/api/employees/:id", requireAdmin, async (req, res) => {
     try {
-      // Check if user is admin (only admins can delete employees)
-      if (req.user!.role !== 'admin') {
-        return res.status(403).json({ message: "Admin access required" });
-      }
-
-      const employeeId = parseInt(req.params.id);
-
-      // Get the employee to be deleted
+      const employeeId = parseInt(req.params.id, 10);
+      const { isActive } = z.object({ isActive: z.boolean() }).parse(req.body ?? {});
       const employee = await storage.getUser(employeeId);
-      if (!employee) {
+      if (!employee || employee.organizationId !== req.user!.organizationId) {
         return res.status(404).json({ message: "Employee not found" });
       }
+      if (employee.id === req.user!.id) return res.status(400).json({ message: "You can't deactivate your own account" });
+      if (employee.role === "admin") return res.status(403).json({ message: "Admin accounts can't be deactivated here" });
 
-      // Check if employee belongs to the same organization
-      if (employee.organizationId !== req.user!.organizationId!) {
-        return res.status(403).json({ message: "Cannot delete employee from different organization" });
+      const updated = isActive ? await storage.reactivateUser(employeeId) : await storage.deactivateUser(employeeId);
+      syncBillingQuantity(req.user!.organizationId!).catch(console.error);
+      console.log(`Employee ${employee.email} ${isActive ? "reactivated" : "deactivated"} by ${req.user!.email}`);
+      res.json(toSafeUser(updated));
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ message: "isActive must be true or false" });
+      console.error("Employee status error:", error);
+      res.status(500).json({ message: "Failed to update employee" });
+    }
+  });
+
+  // Permanently delete an employee and everything that references them.
+  app.delete("/api/employees/:id", requireAdmin, async (req, res) => {
+    try {
+      const employeeId = parseInt(req.params.id, 10);
+      const employee = await storage.getUser(employeeId);
+      if (!employee || employee.organizationId !== req.user!.organizationId) {
+        return res.status(404).json({ message: "Employee not found" });
       }
+      if (employee.id === req.user!.id) return res.status(400).json({ message: "You can't delete your own account" });
+      if (employee.role === "admin") return res.status(403).json({ message: "Admin accounts can't be deleted here" });
 
-      // Cannot delete admin users
-      if (employee.role === 'admin') {
-        return res.status(403).json({ message: "Cannot delete admin users" });
-      }
-
-      // Delete the employee
-      await storage.deleteUser(employeeId);
-
-      console.log(`Employee ${employee.email} (${employee.role}) deleted by admin ${req.user!.email}`);
-      res.json({ message: "Employee deleted successfully" });
+      await storage.deleteUserCascade(employeeId);
+      syncBillingQuantity(req.user!.organizationId!).catch(console.error);
+      console.log(`Employee ${employee.email} permanently deleted by ${req.user!.email}`);
+      res.json({ message: "Employee deleted" });
     } catch (error) {
       console.error("Delete employee error:", error);
       res.status(500).json({ message: "Failed to delete employee" });
@@ -1972,15 +2016,14 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/create-invitation", requireAuth, async (req, res) => {
     try {
       // Check if user is manager or admin
-      if (req.user!.role !== 'manager' && req.user!.role !== 'admin') {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Manager or Admin access required" });
       }
 
       const { email, role } = req.body;
 
-      // Check role permissions: only admin can invite managers
-      if (role === 'manager' && req.user!.role !== 'admin') {
-        return res.status(403).json({ message: "Only admin can create manager invitations" });
+      if (role && !["employee", "admin"].includes(role)) {
+        return res.status(400).json({ message: "Role must be employee or admin" });
       }
 
       // Check if user already exists in this organization
@@ -2017,7 +2060,7 @@ export function registerRoutes(app: Express): Server {
 
       res.json({
         ...invitation,
-        invitationUrl: `${req.protocol}://${req.hostname}/register?token=${token}`
+        invitationUrl: `${process.env.APP_URL || `${req.protocol}://${req.get("host")}`}/invite/${token}`
       });
     } catch (error) {
       console.error("Create invitation error:", error);
@@ -2028,7 +2071,7 @@ export function registerRoutes(app: Express): Server {
   app.get("/api/invitations", requireAuth, async (req, res) => {
     try {
       // Check if user is manager or admin
-      if (req.user!.role !== 'manager' && req.user!.role !== 'admin') {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Manager or Admin access required" });
       }
 
@@ -2040,45 +2083,66 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
+  // ── Public: look up an invitation by token (for the /invite/:token page) ──
+  app.get("/api/invitations/by-token/:token", async (req, res) => {
+    try {
+      const invitation = await storage.getInvitationByToken(req.params.token);
+      if (!invitation) return res.status(404).json({ message: "Invitation not found" });
+      const org = await storage.getOrganization(invitation.organizationId);
+      const inviter = invitation.invitedBy ? await storage.getUser(invitation.invitedBy) : undefined;
+      res.json({
+        email: invitation.email,
+        role: invitation.role ?? "employee",
+        organisation: org ? publicOrg(org) : null,
+        invitedBy: inviter ? `${inviter.firstName} ${inviter.lastName}` : null,
+        expired: new Date() > new Date(invitation.expiresAt),
+        used: !!invitation.used,
+      });
+    } catch (error) {
+      console.error("Invitation lookup error:", error);
+      res.status(500).json({ message: "Failed to look up invitation" });
+    }
+  });
+
   app.post("/api/register-with-token", async (req, res) => {
     try {
-      const { token, firstName, lastName, password, faceImageData } = req.body;
-
-      // Validate invitation token
-      const invitation = await storage.getInvitationByToken(token);
-      if (!invitation) {
-        return res.status(400).json({ message: "Invalid or expired invitation" });
+      const { token, firstName, lastName, password } = req.body as Record<string, string>;
+      if (!token || !firstName?.trim() || !lastName?.trim() || !password) {
+        return res.status(400).json({ message: "Name and password are required" });
+      }
+      if (password.length < 8) {
+        return res.status(400).json({ message: "Password must be at least 8 characters" });
       }
 
-      if (new Date() > invitation.expiresAt) {
+      const invitation = await storage.getInvitationByToken(token);
+      if (!invitation || invitation.used) {
+        return res.status(400).json({ message: "Invalid or already-used invitation" });
+      }
+      if (new Date() > new Date(invitation.expiresAt)) {
         return res.status(400).json({ message: "Invitation has expired" });
       }
 
-      // Check if user already exists
-      const existingUser = await storage.getUserByEmail(invitation.email);
+      const existingUser = await storage.getUserByEmail(invitation.email, invitation.organizationId);
       if (existingUser) {
-        return res.status(400).json({ message: "User already exists" });
+        return res.status(400).json({ message: "An account with this email already exists in this organisation" });
       }
 
-      // Hash password
       const hashedPassword = await hashPassword(password);
-
-      // Create user with face image
+      const role = invitation.role === "admin" ? "admin" : "employee";
       const user = await storage.createUser({
         email: invitation.email,
-        firstName,
-        lastName,
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
         password: hashedPassword,
-        role: invitation.role ?? undefined,
-        faceImageUrl: faceImageData || null,
+        role,
+        organizationId: invitation.organizationId,
+        isActive: true,
       });
 
-      // Mark invitation as used
       await storage.markInvitationUsed(invitation.id);
+      if (role === "employee") syncBillingQuantity(invitation.organizationId).catch(console.error);
 
-      // Set session
       (req.session as any).userId = user.id;
-
       res.json(toSafeUser(user));
     } catch (error) {
       console.error("Register with token error:", error);
