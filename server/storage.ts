@@ -10,6 +10,7 @@ import {
   subscriptions,
   webhookEvents,
   employeeConsents,
+  passwordResetTokens,
   shiftTemplates,
   shifts,
   type ShiftTemplate,
@@ -67,6 +68,10 @@ export interface IStorage {
   getAllEmployees(organizationId?: number): Promise<User[]>;
   getAllUsers(organizationId?: number): Promise<User[]>;
   deleteUser(id: number): Promise<void>;
+  deactivateUser(id: number): Promise<User>;
+  reactivateUser(id: number): Promise<User>;
+  deleteUserCascade(id: number): Promise<void>;
+  migrateManagersToEmployees(): Promise<number>;
   getActiveEmployeeCount(organizationId: number): Promise<number>;
   getOrganizationAdmins(organizationId: number): Promise<User[]>;
 
@@ -375,6 +380,45 @@ export class DatabaseStorage implements IStorage {
 
   async deleteUser(id: number): Promise<void> {
     await db.delete(users).where(eq(users.id, id));
+  }
+
+  /** Soft-remove: blocks sign-in, frees the billed seat and wipes biometric/PIN data. History is kept. */
+  async deactivateUser(id: number): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({ isActive: false, faceEmbedding: null, faceImageUrl: null, pinHash: null, pinEnabled: false, updatedAt: new Date() })
+      .where(eq(users.id, id))
+      .returning();
+    return user;
+  }
+
+  async reactivateUser(id: number): Promise<User> {
+    const [user] = await db.update(users).set({ isActive: true, updatedAt: new Date() }).where(eq(users.id, id)).returning();
+    return user;
+  }
+
+  /** Hard delete: removes every row that references the user, then the user. Irreversible. */
+  async deleteUserCascade(id: number): Promise<void> {
+    await db.transaction(async (tx: any) => {
+      await tx.delete(employeeLocations).where(eq(employeeLocations.userId, id));
+      await tx.delete(employeeConsents).where(eq(employeeConsents.userId, id));
+      await tx.delete(attendanceVerificationLogs).where(eq(attendanceVerificationLogs.userId, id));
+      await tx.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, id));
+      await tx.delete(shiftTemplates).where(eq(shiftTemplates.userId, id));
+      await tx.delete(shifts).where(eq(shifts.userId, id));
+      await tx.update(shifts).set({ createdBy: null }).where(eq(shifts.createdBy, id));
+      await tx.delete(attendanceRecords).where(eq(attendanceRecords.userId, id));
+      await tx.update(attendanceRecords).set({ manuallyApprovedBy: null }).where(eq(attendanceRecords.manuallyApprovedBy, id));
+      await tx.update(employeeInvitations).set({ invitedBy: null }).where(eq(employeeInvitations.invitedBy, id));
+      await tx.update(employeeLocations).set({ assignedById: sql`${employeeLocations.userId}` }).where(eq(employeeLocations.assignedById, id));
+      await tx.delete(users).where(eq(users.id, id));
+    });
+  }
+
+  /** One-off data fix: the manager role was removed; former managers become employees. */
+  async migrateManagersToEmployees(): Promise<number> {
+    const rows = await db.update(users).set({ role: "employee", updatedAt: new Date() }).where(eq(users.role, "manager")).returning({ id: users.id });
+    return rows.length;
   }
 
   async getActiveEmployeeCount(organizationId: number): Promise<number> {

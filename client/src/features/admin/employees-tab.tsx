@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Copy, ScanFace, Trash2, UserPlus, Users } from "lucide-react";
+import { Copy, MoreHorizontal, ScanFace, Trash2, UserMinus, UserPlus, UserRoundCheck, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { AvatarInitials } from "@/components/ui/avatar-initials";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { cleanError, fullName, type SafeUser } from "@/lib/types";
@@ -25,6 +26,7 @@ export function EmployeesTab({ currentUserId }: { currentUserId: number }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [created, setCreated] = useState<{ user: SafeUser; defaultPassword: string } | null>(null);
   const [toDelete, setToDelete] = useState<SafeUser | null>(null);
+  const [toDeactivate, setToDeactivate] = useState<SafeUser | null>(null);
 
   const createMutation = useMutation({
     mutationFn: async (data: { firstName: string; lastName: string; email: string }) =>
@@ -38,16 +40,32 @@ export function EmployeesTab({ currentUserId }: { currentUserId: number }) {
     onError: (e) => toast({ title: "Couldn't create employee", description: cleanError(e), variant: "destructive" }),
   });
 
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/employee-locations"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/billing/status"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/rota"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/dashboard/today"] });
+  };
+
+  const statusMutation = useMutation({
+    mutationFn: async ({ id, isActive }: { id: number; isActive: boolean }) => apiRequest(`/api/employees/${id}`, { method: "PATCH", body: { isActive } }),
+    onSuccess: (_r, v) => {
+      refresh();
+      setToDeactivate(null);
+      toast({ title: v.isActive ? "Employee reactivated" : "Employee deactivated", description: v.isActive ? "They can sign in again. They will need to set up face or PIN clock-in afresh." : "They can no longer sign in and are no longer billed. Their history is kept." });
+    },
+    onError: (e) => toast({ title: "Couldn't update employee", description: cleanError(e), variant: "destructive" }),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => apiRequest(`/api/employees/${id}`, { method: "DELETE" }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/employee-locations"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/billing/status"] });
+      refresh();
       setToDelete(null);
-      toast({ title: "Employee removed" });
+      toast({ title: "Employee deleted permanently" });
     },
-    onError: (e) => toast({ title: "Couldn't remove employee", description: cleanError(e), variant: "destructive" }),
+    onError: (e) => toast({ title: "Couldn't delete employee", description: cleanError(e), variant: "destructive" }),
   });
 
   const sorted = [...employees].sort((a, b) => (a.role === b.role ? fullName(a).localeCompare(fullName(b)) : a.role === "admin" ? -1 : 1));
@@ -91,10 +109,10 @@ export function EmployeesTab({ currentUserId }: { currentUserId: number }) {
                 {sorted.map((emp) => {
                   const sites = assignments.filter((a) => a.userId === emp.id).map((a) => a.location);
                   return (
-                    <TableRow key={emp.id}>
+                    <TableRow key={emp.id} className={!emp.isActive ? "opacity-60" : undefined}>
                       <TableCell>
                         <div className="flex items-center gap-3">
-                          <AvatarInitials name={fullName(emp)} />
+                          <AvatarInitials name={fullName(emp)} className={!emp.isActive ? "grayscale" : undefined} />
                           <div className="min-w-0">
                             <p className="truncate font-medium">{fullName(emp)}</p>
                             <p className="truncate text-xs text-muted-foreground">{emp.email}</p>
@@ -135,9 +153,28 @@ export function EmployeesTab({ currentUserId }: { currentUserId: number }) {
                       </TableCell>
                       <TableCell className="text-right">
                         {emp.role !== "admin" && emp.id !== currentUserId && (
-                          <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => setToDelete(emp)}>
-                            <Trash2 className="h-4 w-4" /> Remove
-                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" aria-label="Employee actions">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {emp.isActive ? (
+                                <DropdownMenuItem onSelect={() => setToDeactivate(emp)}>
+                                  <UserMinus /> Deactivate
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem onSelect={() => statusMutation.mutate({ id: emp.id, isActive: true })}>
+                                  <UserRoundCheck /> Reactivate
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setToDelete(emp)}>
+                                <Trash2 /> Delete permanently
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         )}
                       </TableCell>
                     </TableRow>
@@ -215,11 +252,20 @@ export function EmployeesTab({ currentUserId }: { currentUserId: number }) {
       </Dialog>
 
       <ConfirmDialog
+        open={!!toDeactivate}
+        onOpenChange={(o) => !o && setToDeactivate(null)}
+        title={`Deactivate ${toDeactivate ? fullName(toDeactivate) : "employee"}?`}
+        description="They can no longer sign in or clock in and stop counting towards your bill from today. Their face and PIN data is wiped; attendance history is kept. You can reactivate them later."
+        confirmLabel="Deactivate"
+        pending={statusMutation.isPending}
+        onConfirm={() => toDeactivate && statusMutation.mutate({ id: toDeactivate.id, isActive: false })}
+      />
+      <ConfirmDialog
         open={!!toDelete}
         onOpenChange={(o) => !o && setToDelete(null)}
-        title={`Remove ${toDelete ? fullName(toDelete) : "employee"}?`}
-        description="They will no longer be able to sign in or clock in, and they stop counting towards your bill."
-        confirmLabel="Remove"
+        title={`Permanently delete ${toDelete ? fullName(toDelete) : "employee"}?`}
+        description="This erases their account, attendance history, shifts, consent records and biometric data. It cannot be undone. If you only need to stop them clocking in, use Deactivate instead."
+        confirmLabel="Delete permanently"
         destructive
         pending={deleteMutation.isPending}
         onConfirm={() => toDelete && deleteMutation.mutate(toDelete.id)}

@@ -186,7 +186,7 @@ export function PinAuthDialog({
 
         <div className="text-xs text-muted-foreground text-center">
           <p>Using PIN authentication for security backup</p>
-          <p>Your manager will be notified of this verification method</p>
+          <p>Your admin can see which method you used</p>
         </div>
       </DialogContent>
     </Dialog>

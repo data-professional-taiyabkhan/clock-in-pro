@@ -47,6 +47,13 @@ function publicOrg(org: Organization) {
   };
 }
 
+/** Readable one-time password: 12 chars, no ambiguous characters. */
+function generateTempPassword(): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const bytes = crypto.randomBytes(12);
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
+}
+
 function toSafeUser(user: User) {
   const { password: _password, faceEmbedding: _faceEmbedding, pinHash: _pinHash, ...rest } = user;
   const hasEmbedding = Array.isArray(user.faceEmbedding)
@@ -438,7 +445,7 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/employees/:id/face-image", requireAuth, async (req, res) => {
     try {
       // Check if user is manager or admin
-      if (req.user!.role !== 'manager' && req.user!.role !== 'admin') {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Manager or Admin access required" });
       }
 
@@ -1158,7 +1165,7 @@ export function registerRoutes(app: Express): Server {
   // Audit logging endpoints for managers/admins
   app.get("/api/audit-logs", requireAuth, async (req, res) => {
     try {
-      if (!['manager', 'admin'].includes(req.user!.role)) {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Access denied" });
       }
 
@@ -1186,7 +1193,7 @@ export function registerRoutes(app: Express): Server {
 
   app.get("/api/audit-logs/:userId", requireAuth, async (req, res) => {
     try {
-      if (!['manager', 'admin'].includes(req.user!.role)) {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Access denied" });
       }
 
@@ -1209,7 +1216,7 @@ export function registerRoutes(app: Express): Server {
 
   app.get("/api/security-alerts", requireAuth, async (req, res) => {
     try {
-      if (!['manager', 'admin'].includes(req.user!.role)) {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Access denied" });
       }
 
@@ -1225,7 +1232,7 @@ export function registerRoutes(app: Express): Server {
   // Anomaly detection endpoints
   app.get("/api/anomalies", requireAuth, async (req, res) => {
     try {
-      if (!['manager', 'admin'].includes(req.user!.role)) {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Access denied" });
       }
 
@@ -1241,7 +1248,7 @@ export function registerRoutes(app: Express): Server {
 
   app.get("/api/security-metrics", requireAuth, async (req, res) => {
     try {
-      if (!['manager', 'admin'].includes(req.user!.role)) {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Access denied" });
       }
 
@@ -1886,64 +1893,11 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // Delete user with role-based permissions
-  app.delete("/api/users/:id", requireAuth, async (req, res) => {
-    try {
-      const userId = parseInt(req.params.id);
-
-      if (isNaN(userId)) {
-        return res.status(400).json({ message: "Invalid user ID" });
-      }
-
-      // Check if user exists
-      const targetUser = await storage.getUser(userId);
-      if (!targetUser) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      // Prevent deleting yourself
-      if (userId === req.user!.id) {
-        return res.status(400).json({ message: "Cannot delete your own account" });
-      }
-
-      // Role-based deletion permissions
-      const currentUserRole = req.user!.role;
-      const targetUserRole = targetUser.role;
-
-      // No one can delete admin
-      if (targetUserRole === "admin") {
-        return res.status(403).json({ message: "Cannot delete admin users" });
-      }
-
-      // Only admin can delete managers
-      if (targetUserRole === "manager" && currentUserRole !== "admin") {
-        return res.status(403).json({ message: "Only admin can delete managers" });
-      }
-
-      // Managers can only delete employees, admins can delete anyone (except admin)
-      if (currentUserRole === "manager" && targetUserRole !== "employee") {
-        return res.status(403).json({ message: "Managers can only delete employees" });
-      }
-
-      // Employees cannot delete anyone
-      if (currentUserRole === "employee") {
-        return res.status(403).json({ message: "Employees cannot delete users" });
-      }
-
-      await storage.deleteUser(userId);
-      console.log(`User ${targetUser.email} (${targetUserRole}) deleted by ${req.user!.email} (${currentUserRole})`);
-      res.json({ message: "User deleted successfully" });
-    } catch (error) {
-      console.error("Delete user error:", error);
-      res.status(500).json({ message: "Failed to delete user" });
-    }
-  });
-
-  // Employee management (Manager/Admin only)
+  // Employee management (admin only)
   app.get("/api/employees", requireAuth, async (req, res) => {
     try {
       // Check if user is manager or admin
-      if (req.user!.role !== 'manager' && req.user!.role !== 'admin') {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Manager access required" });
       }
 
@@ -1961,7 +1915,7 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/employees", requireAuth, async (req, res) => {
     try {
       // Check if user is manager or admin
-      if (req.user!.role !== 'manager' && req.user!.role !== 'admin') {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Manager access required" });
       }
 
@@ -1972,9 +1926,8 @@ export function registerRoutes(app: Express): Server {
         return res.status(400).json({ message: "First name, last name, and email are required" });
       }
 
-      // Role-based permissions: only admin can create managers
-      if (role === 'manager' && req.user!.role !== 'admin') {
-        return res.status(403).json({ message: "Only admin can create manager accounts" });
+      if (role && !["employee", "admin"].includes(role)) {
+        return res.status(400).json({ message: "Role must be employee or admin" });
       }
 
       // Check if user already exists in this organization
@@ -1983,8 +1936,8 @@ export function registerRoutes(app: Express): Server {
         return res.status(400).json({ message: "User with this email already exists in this organization" });
       }
 
-      // Create default password (can be changed later)
-      const defaultPassword = "password123";
+      // One-time temporary password, shown to the admin once; the employee should change it after signing in
+      const defaultPassword = generateTempPassword();
       const hashedPassword = await hashPassword(defaultPassword);
 
       // Create the employee directly with organization ID
@@ -2000,10 +1953,12 @@ export function registerRoutes(app: Express): Server {
         faceEmbedding: null
       });
 
+      if ((role || "employee") === "employee") syncBillingQuantity(req.user!.organizationId!).catch(console.error);
+
       res.json({
         message: "Employee created successfully",
         user: toSafeUser(newUser),
-        defaultPassword: defaultPassword,
+        defaultPassword,
         note: "Employee can change password after first login"
       });
     } catch (error) {
@@ -2012,36 +1967,45 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  app.delete("/api/employees/:id", requireAuth, async (req, res) => {
+  // Deactivate / reactivate an employee. Deactivating keeps attendance history,
+  // blocks sign-in, frees the billed seat and wipes face + PIN data.
+  app.patch("/api/employees/:id", requireAdmin, async (req, res) => {
     try {
-      // Check if user is admin (only admins can delete employees)
-      if (req.user!.role !== 'admin') {
-        return res.status(403).json({ message: "Admin access required" });
-      }
-
-      const employeeId = parseInt(req.params.id);
-
-      // Get the employee to be deleted
+      const employeeId = parseInt(req.params.id, 10);
+      const { isActive } = z.object({ isActive: z.boolean() }).parse(req.body ?? {});
       const employee = await storage.getUser(employeeId);
-      if (!employee) {
+      if (!employee || employee.organizationId !== req.user!.organizationId) {
         return res.status(404).json({ message: "Employee not found" });
       }
+      if (employee.id === req.user!.id) return res.status(400).json({ message: "You can't deactivate your own account" });
+      if (employee.role === "admin") return res.status(403).json({ message: "Admin accounts can't be deactivated here" });
 
-      // Check if employee belongs to the same organization
-      if (employee.organizationId !== req.user!.organizationId!) {
-        return res.status(403).json({ message: "Cannot delete employee from different organization" });
+      const updated = isActive ? await storage.reactivateUser(employeeId) : await storage.deactivateUser(employeeId);
+      syncBillingQuantity(req.user!.organizationId!).catch(console.error);
+      console.log(`Employee ${employee.email} ${isActive ? "reactivated" : "deactivated"} by ${req.user!.email}`);
+      res.json(toSafeUser(updated));
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ message: "isActive must be true or false" });
+      console.error("Employee status error:", error);
+      res.status(500).json({ message: "Failed to update employee" });
+    }
+  });
+
+  // Permanently delete an employee and everything that references them.
+  app.delete("/api/employees/:id", requireAdmin, async (req, res) => {
+    try {
+      const employeeId = parseInt(req.params.id, 10);
+      const employee = await storage.getUser(employeeId);
+      if (!employee || employee.organizationId !== req.user!.organizationId) {
+        return res.status(404).json({ message: "Employee not found" });
       }
+      if (employee.id === req.user!.id) return res.status(400).json({ message: "You can't delete your own account" });
+      if (employee.role === "admin") return res.status(403).json({ message: "Admin accounts can't be deleted here" });
 
-      // Cannot delete admin users
-      if (employee.role === 'admin') {
-        return res.status(403).json({ message: "Cannot delete admin users" });
-      }
-
-      // Delete the employee
-      await storage.deleteUser(employeeId);
-
-      console.log(`Employee ${employee.email} (${employee.role}) deleted by admin ${req.user!.email}`);
-      res.json({ message: "Employee deleted successfully" });
+      await storage.deleteUserCascade(employeeId);
+      syncBillingQuantity(req.user!.organizationId!).catch(console.error);
+      console.log(`Employee ${employee.email} permanently deleted by ${req.user!.email}`);
+      res.json({ message: "Employee deleted" });
     } catch (error) {
       console.error("Delete employee error:", error);
       res.status(500).json({ message: "Failed to delete employee" });
@@ -2052,15 +2016,14 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/create-invitation", requireAuth, async (req, res) => {
     try {
       // Check if user is manager or admin
-      if (req.user!.role !== 'manager' && req.user!.role !== 'admin') {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Manager or Admin access required" });
       }
 
       const { email, role } = req.body;
 
-      // Check role permissions: only admin can invite managers
-      if (role === 'manager' && req.user!.role !== 'admin') {
-        return res.status(403).json({ message: "Only admin can create manager invitations" });
+      if (role && !["employee", "admin"].includes(role)) {
+        return res.status(400).json({ message: "Role must be employee or admin" });
       }
 
       // Check if user already exists in this organization
@@ -2108,7 +2071,7 @@ export function registerRoutes(app: Express): Server {
   app.get("/api/invitations", requireAuth, async (req, res) => {
     try {
       // Check if user is manager or admin
-      if (req.user!.role !== 'manager' && req.user!.role !== 'admin') {
+      if (req.user!.role !== 'admin') {
         return res.status(403).json({ message: "Manager or Admin access required" });
       }
 

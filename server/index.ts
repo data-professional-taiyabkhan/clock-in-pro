@@ -10,6 +10,7 @@ import { registerPinRoutes } from "./routes/pin.routes";
 import { registerPasswordRoutes } from "./routes/password.routes";
 import { registerScheduleRoutes } from "./routes/schedules.routes";
 import { setupAuth } from "./auth";
+import { storage } from "./storage";
 import { requireActiveSubscription } from "./middleware/entitlement";
 import { startTrialExpiryReminderJob } from "./jobs/trial-expiry-reminder";
 import { startAutoClockoutJob } from "./jobs/auto-clockout";
@@ -99,6 +100,12 @@ app.use((req, res, next) => {
   server.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
     log(`Environment: ${getEnvironment()}`);
+
+    // One-off data fix: the manager role no longer exists
+    storage
+      .migrateManagersToEmployees()
+      .then((n) => n && log(`Converted ${n} manager account(s) to employees`))
+      .catch((e) => console.error("Manager role migration failed:", e));
 
     // Start background jobs
     startTrialExpiryReminderJob();

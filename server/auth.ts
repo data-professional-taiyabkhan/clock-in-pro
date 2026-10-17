@@ -65,14 +65,6 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-// Middleware to require manager/admin role
-export function requireManager(req: Request, res: Response, next: NextFunction) {
-  if (!req.user || (req.user.role !== "manager" && req.user.role !== "admin")) {
-    return res.status(403).json({ message: "Manager access required" });
-  }
-  next();
-}
-
 // Middleware to require admin role
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (!req.user || req.user.role !== "admin") {
