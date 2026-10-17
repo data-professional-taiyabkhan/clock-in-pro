@@ -57,8 +57,8 @@ export function EmployeeAnalyticsDashboard() {
           {[...Array(4)].map((_, i) => (
             <Card key={i}>
               <CardHeader className="animate-pulse">
-                <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                <div className="h-8 bg-gray-200 rounded w-1/2"></div>
+                <div className="h-4 bg-muted rounded w-3/4"></div>
+                <div className="h-8 bg-muted rounded w-1/2"></div>
               </CardHeader>
             </Card>
           ))}
@@ -152,7 +152,7 @@ export function EmployeeAnalyticsDashboard() {
           <CardContent>
             <div className="text-2xl font-bold">
               {analytics.summary.isCurrentlyWorking ? (
-                <Badge variant="default" className="text-green-600 bg-green-100">Working</Badge>
+                <Badge variant="default" className="bg-success/10 text-success border-transparent">Working</Badge>
               ) : (
                 <Badge variant="secondary">Off duty</Badge>
               )}
@@ -198,7 +198,7 @@ export function EmployeeAnalyticsDashboard() {
                           </>
                         )}
                         {record.isCurrentlyWorking && (
-                          <Badge variant="outline" className="text-green-600">
+                          <Badge variant="outline" className="text-success border-success/40">
                             Currently Working
                           </Badge>
                         )}

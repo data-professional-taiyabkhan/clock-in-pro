@@ -18,6 +18,7 @@ import { sendInvitationEmail } from "./lib/email";
 // Face recognition & image storage (local implementations)
 import { uploadFaceImage, getSignedFaceImageUrl, downloadFaceImageAsBase64 } from "./lib/face-image-storage";
 import { analyzeFaceQuality } from "./lib/face-recognition";
+import { syncBillingQuantity } from "./jobs/sync-billing-quantity";
 import {
   DESCRIPTOR_LENGTH,
   euclideanDistance,
@@ -2017,7 +2018,7 @@ export function registerRoutes(app: Express): Server {
 
       res.json({
         ...invitation,
-        invitationUrl: `${req.protocol}://${req.hostname}/register?token=${token}`
+        invitationUrl: `${process.env.APP_URL || `${req.protocol}://${req.get("host")}`}/invite/${token}`
       });
     } catch (error) {
       console.error("Create invitation error:", error);
@@ -2040,45 +2041,66 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
+  // ── Public: look up an invitation by token (for the /invite/:token page) ──
+  app.get("/api/invitations/by-token/:token", async (req, res) => {
+    try {
+      const invitation = await storage.getInvitationByToken(req.params.token);
+      if (!invitation) return res.status(404).json({ message: "Invitation not found" });
+      const org = await storage.getOrganization(invitation.organizationId);
+      const inviter = invitation.invitedBy ? await storage.getUser(invitation.invitedBy) : undefined;
+      res.json({
+        email: invitation.email,
+        role: invitation.role ?? "employee",
+        organisation: org ? { name: org.name, slug: org.slug, logoUrl: (org as any).logoUrl ?? null, brandColor: (org as any).brandColor ?? null } : null,
+        invitedBy: inviter ? `${inviter.firstName} ${inviter.lastName}` : null,
+        expired: new Date() > new Date(invitation.expiresAt),
+        used: !!invitation.used,
+      });
+    } catch (error) {
+      console.error("Invitation lookup error:", error);
+      res.status(500).json({ message: "Failed to look up invitation" });
+    }
+  });
+
   app.post("/api/register-with-token", async (req, res) => {
     try {
-      const { token, firstName, lastName, password, faceImageData } = req.body;
-
-      // Validate invitation token
-      const invitation = await storage.getInvitationByToken(token);
-      if (!invitation) {
-        return res.status(400).json({ message: "Invalid or expired invitation" });
+      const { token, firstName, lastName, password } = req.body as Record<string, string>;
+      if (!token || !firstName?.trim() || !lastName?.trim() || !password) {
+        return res.status(400).json({ message: "Name and password are required" });
+      }
+      if (password.length < 8) {
+        return res.status(400).json({ message: "Password must be at least 8 characters" });
       }
 
-      if (new Date() > invitation.expiresAt) {
+      const invitation = await storage.getInvitationByToken(token);
+      if (!invitation || invitation.used) {
+        return res.status(400).json({ message: "Invalid or already-used invitation" });
+      }
+      if (new Date() > new Date(invitation.expiresAt)) {
         return res.status(400).json({ message: "Invitation has expired" });
       }
 
-      // Check if user already exists
-      const existingUser = await storage.getUserByEmail(invitation.email);
+      const existingUser = await storage.getUserByEmail(invitation.email, invitation.organizationId);
       if (existingUser) {
-        return res.status(400).json({ message: "User already exists" });
+        return res.status(400).json({ message: "An account with this email already exists in this organisation" });
       }
 
-      // Hash password
       const hashedPassword = await hashPassword(password);
-
-      // Create user with face image
+      const role = invitation.role === "admin" ? "admin" : "employee";
       const user = await storage.createUser({
         email: invitation.email,
-        firstName,
-        lastName,
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
         password: hashedPassword,
-        role: invitation.role ?? undefined,
-        faceImageUrl: faceImageData || null,
+        role,
+        organizationId: invitation.organizationId,
+        isActive: true,
       });
 
-      // Mark invitation as used
       await storage.markInvitationUsed(invitation.id);
+      if (role === "employee") syncBillingQuantity(invitation.organizationId).catch(console.error);
 
-      // Set session
       (req.session as any).userId = user.id;
-
       res.json(toSafeUser(user));
     } catch (error) {
       console.error("Register with token error:", error);

@@ -35,7 +35,7 @@ export async function sendInvitationEmail(params: {
   token: string;
   role: string;
 }) {
-  const link = `${APP_URL}/register-with-token?token=${params.token}`;
+  const link = `${APP_URL}/invite/${params.token}`;
   const html = `
     <div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px">
       <h2>You've been invited to ${escapeHtml(params.organisationName)}</h2>

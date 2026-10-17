@@ -1,338 +1,308 @@
 import { Link } from "wouter";
-import { Button } from "@/components/ui/button";
 import {
-    Shield, Clock, MapPin, FileText, Users, Lock,
-    ChevronRight, CheckCircle, ArrowRight, Star, Zap,
-    Fingerprint, Globe, BarChart3,
+  ArrowRight,
+  BadgeCheck,
+  CalendarClock,
+  Check,
+  Clock,
+  Fingerprint,
+  KeyRound,
+  Link2,
+  MapPin,
+  ScanFace,
+  ShieldCheck,
+  Timer,
+  Users,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { MarketingLayout } from "@/components/layout/marketing-layout";
+import { cn } from "@/lib/utils";
 
-// ─── Animated counter hook ───
-function useCounter(target: number, duration = 2000) {
-  const [count, setCount] = useState(0);
-  const [started, setStarted] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+const features = [
+  {
+    icon: ScanFace,
+    title: "Face-verified clock-in",
+    body: "Staff clock in by looking at their phone. Matching runs on-device and on your server, so no photos are sent to third-party face APIs.",
+  },
+  {
+    icon: MapPin,
+    title: "Geofenced locations",
+    body: "Set a radius around each site. Clock-ins outside it are refused, so nobody signs in from the bus.",
+  },
+  {
+    icon: CalendarClock,
+    title: "Rotas and weekly contracts",
+    body: "Set a contract once, for example 08:00 to 12:00 every day except Friday and Sunday, and it applies every week. Add one-off shifts when you need them.",
+  },
+  {
+    icon: Timer,
+    title: "Lateness, your rules",
+    body: "You decide what counts as late, two minutes or fifteen. Late arrivals and no-shows are flagged on the dashboard the moment they happen.",
+  },
+  {
+    icon: KeyRound,
+    title: "PIN fallback and consent",
+    body: "Face verification is opt-in with recorded consent. Anyone can use a secure PIN instead, and delete their face data at any time.",
+  },
+  {
+    icon: Link2,
+    title: "Your branded employee portal",
+    body: "Every organisation gets its own login link with your logo, colours and wallpaper. Share one link and your team is in.",
+  },
+];
 
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) setStarted(true);
-    }, { threshold: 0.3 });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
+const steps = [
+  {
+    title: "Create your organisation",
+    body: "Two minutes. Add a card so nothing interrupts you later. You are charged nothing for 30 days and can cancel before then at no cost.",
+  },
+  {
+    title: "Share your login link",
+    body: "Add staff, assign sites and contracts, and send them your organisation's personal link.",
+  },
+  {
+    title: "Staff clock in from any phone",
+    body: "They register their face once, then clock in and out in seconds. You see who is in, who is late and who has not turned up.",
+  },
+];
 
-  useEffect(() => {
-    if (!started) return;
-    let start = 0;
-    const step = target / (duration / 16);
-    const interval = setInterval(() => {
-      start += step;
-      if (start >= target) {
-        setCount(target);
-        clearInterval(interval);
-      } else {
-        setCount(Math.floor(start));
-      }
-    }, 16);
-    return () => clearInterval(interval);
-  }, [started, target, duration]);
-
-  return { count, ref };
-}
-
-// ─── Fade-in on scroll hook ───
-function useFadeIn() {
-  const ref = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) setVisible(true);
-    }, { threshold: 0.1 });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  return { ref, className: `transition-all duration-700 ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}` };
+function PreviewCard() {
+  const rows = [
+    { name: "Amara O.", shift: "08:00 – 16:00", status: "On time", at: "07:56", tone: "success" },
+    { name: "Ben K.", shift: "08:00 – 16:00", status: "Late +7m", at: "08:12", tone: "warning" },
+    { name: "Chloe W.", shift: "09:00 – 17:00", status: "On shift", at: "08:58", tone: "success" },
+    { name: "Dev P.", shift: "09:00 – 13:00", status: "No-show", at: "—", tone: "destructive" },
+  ];
+  return (
+    <div className="surface relative mx-auto w-full max-w-md overflow-hidden p-5 shadow-xl">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Today</p>
+          <p className="font-semibold">Riverside Café</p>
+        </div>
+        <span className="rounded-full bg-success/10 px-2.5 py-1 text-xs font-medium text-success">Live</span>
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        {[
+          { label: "On shift", value: "12", cls: "text-foreground" },
+          { label: "Late", value: "2", cls: "text-warning" },
+          { label: "No-shows", value: "1", cls: "text-destructive" },
+        ].map((s) => (
+          <div key={s.label} className="rounded-xl bg-muted/60 p-3">
+            <p className="text-[11px] text-muted-foreground">{s.label}</p>
+            <p className={cn("text-xl font-bold tabular-nums", s.cls)}>{s.value}</p>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 divide-y divide-border/70">
+        {rows.map((r) => (
+          <div key={r.name} className="flex items-center gap-3 py-2.5">
+            <div className="brand-gradient flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white">
+              {r.name.split(" ").map((p) => p[0]).join("")}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{r.name}</p>
+              <p className="text-xs text-muted-foreground">{r.shift}</p>
+            </div>
+            <div className="text-right">
+              <span
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[11px] font-medium",
+                  r.tone === "success" && "bg-success/10 text-success",
+                  r.tone === "warning" && "bg-warning/15 text-warning",
+                  r.tone === "destructive" && "bg-destructive/10 text-destructive"
+                )}
+              >
+                {r.status}
+              </span>
+              <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">{r.at}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="absolute -right-3 -top-3 hidden rotate-6 items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-xs shadow-lg sm:flex">
+        <ScanFace className="h-4 w-4 text-primary" />
+        <span className="font-medium">Face verified</span>
+        <span className="text-muted-foreground">0.4s</span>
+      </div>
+    </div>
+  );
 }
 
 export default function LandingPage() {
-    const fade1 = useFadeIn();
-    const fade2 = useFadeIn();
-    const fade3 = useFadeIn();
-    const fade4 = useFadeIn();
-    const fade5 = useFadeIn();
-    const fadeT1 = useFadeIn();
-    const fadeT2 = useFadeIn();
-    const fadeT3 = useFadeIn();
-
-    return (
-        <div className="min-h-screen bg-[#0a0a0f] text-white overflow-hidden">
-            {/* ── Navigation ── */}
-            <nav className="sticky top-0 z-50 bg-[#0a0a0f]/80 backdrop-blur-xl border-b border-white/5">
-                <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                        <div className="h-9 w-9 bg-gradient-to-br from-blue-500 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20">
-                            <Clock className="h-5 w-5 text-white" />
-                        </div>
-                        <span className="text-xl font-bold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
-                            Clock-In Pro
-                        </span>
-                    </div>
-                    <div className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
-                        <Link href="/pricing" className="hover:text-white transition-colors duration-200">Pricing</Link>
-                        <Link href="/security" className="hover:text-white transition-colors duration-200">Security</Link>
-                        <Link href="/login" className="hover:text-white transition-colors duration-200">Sign in</Link>
-                        <Link href="/signup">
-                            <Button size="sm" className="bg-gradient-to-r from-blue-500 to-violet-600 hover:from-blue-600 hover:to-violet-700 text-white rounded-lg shadow-lg shadow-blue-500/25 transition-all duration-200 hover:shadow-blue-500/40 hover:scale-[1.02]">
-                                Start free trial <ArrowRight className="h-4 w-4 ml-1" />
-                            </Button>
-                        </Link>
-                    </div>
-                    {/* Mobile menu */}
-                    <div className="md:hidden flex items-center gap-3">
-                        <Link href="/login" className="text-sm text-slate-400 hover:text-white">Sign in</Link>
-                        <Link href="/signup">
-                            <Button size="sm" className="bg-gradient-to-r from-blue-500 to-violet-600 text-white rounded-lg text-xs">
-                                Free trial
-                            </Button>
-                        </Link>
-                    </div>
-                </div>
-            </nav>
-
-            {/* ── Hero ── */}
-            <section className="relative pt-24 pb-32 px-6">
-                {/* Background glow effects */}
-                <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                    <div className="absolute top-20 left-1/4 w-96 h-96 bg-blue-600/20 rounded-full blur-[120px] animate-pulse" />
-                    <div className="absolute top-40 right-1/4 w-80 h-80 bg-violet-600/15 rounded-full blur-[100px] animate-pulse" style={{ animationDelay: "1s" }} />
-                    <div className="absolute -top-20 left-1/2 w-[600px] h-[600px] bg-gradient-to-b from-blue-500/5 to-transparent rounded-full blur-3xl" />
-                </div>
-
-                <div className="max-w-4xl mx-auto text-center relative z-10">
-                    {/* Badge */}
-                    <div className="inline-flex items-center gap-2 bg-white/5 border border-white/10 text-blue-300 px-5 py-2 rounded-full text-sm font-medium mb-8 backdrop-blur-sm animate-[fadeInUp_0.6s_ease-out]">
-                        <Zap className="h-4 w-4 text-yellow-400" />
-                        14-day free trial — no credit card required
-                    </div>
-
-                    {/* Headline */}
-                    <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.05] mb-7 animate-[fadeInUp_0.8s_ease-out]">
-                        <span className="text-white">Attendance tracking,</span>
-                        <br />
-                        <span className="bg-gradient-to-r from-blue-400 via-violet-400 to-purple-400 bg-clip-text text-transparent">
-                            made simple & secure
-                        </span>
-                    </h1>
-
-                    {/* Subtitle */}
-                    <p className="text-lg md:text-xl text-slate-400 max-w-2xl mx-auto mb-12 leading-relaxed animate-[fadeInUp_1s_ease-out]">
-                        Face verification, GPS geofencing, and audit-ready logs — all in one platform.
-                        With a PIN fallback for employees who prefer not to use biometrics.
-                    </p>
-
-                    {/* CTA Buttons */}
-                    <div className="flex flex-col sm:flex-row items-center justify-center gap-4 animate-[fadeInUp_1.2s_ease-out]">
-                        <Link href="/signup">
-                            <Button size="lg" className="bg-gradient-to-r from-blue-500 to-violet-600 hover:from-blue-600 hover:to-violet-700 text-white px-10 py-7 text-lg rounded-2xl shadow-2xl shadow-blue-500/25 transition-all duration-300 hover:shadow-blue-500/40 hover:scale-[1.03] group">
-                                Start free trial
-                                <ChevronRight className="h-5 w-5 ml-1 transition-transform group-hover:translate-x-1" />
-                            </Button>
-                        </Link>
-                        <Link href="/pricing">
-                            <Button size="lg" variant="outline" className="px-10 py-7 text-lg rounded-2xl border-white/10 text-slate-300 bg-white/5 hover:bg-white/10 backdrop-blur-sm transition-all duration-300">
-                                View pricing
-                            </Button>
-                        </Link>
-                    </div>
-
-                    {/* Trust indicators */}
-                    <div className="mt-12 flex items-center justify-center gap-6 text-sm text-slate-500 animate-[fadeInUp_1.4s_ease-out]">
-                        <div className="flex items-center gap-1.5">
-                            <CheckCircle className="h-4 w-4 text-green-500" />
-                            No credit card needed
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                            <CheckCircle className="h-4 w-4 text-green-500" />
-                            GDPR compliant
-                        </div>
-                        <div className="hidden sm:flex items-center gap-1.5">
-                            <CheckCircle className="h-4 w-4 text-green-500" />
-                            Setup in 2 minutes
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            {/* ── Trust signals ── */}
-            <section className="py-16 px-6 border-y border-white/5 bg-white/[0.02]">
-                <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
-                    <div ref={fadeT1.ref} className={fadeT1.className}>
-                        <div className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
-                            14 days
-                        </div>
-                        <p className="text-sm text-slate-500 mt-2">Free trial · no card needed</p>
-                    </div>
-                    <div ref={fadeT2.ref} className={fadeT2.className}>
-                        <div className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-violet-400 to-purple-400 bg-clip-text text-transparent">
-                            £3.50
-                        </div>
-                        <p className="text-sm text-slate-500 mt-2">Per active employee per month</p>
-                    </div>
-                    <div ref={fadeT3.ref} className={fadeT3.className}>
-                        <div className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                            UK · GDPR
-                        </div>
-                        <p className="text-sm text-slate-500 mt-2">Article 9 biometric consent built in</p>
-                    </div>
-                </div>
-            </section>
-
-            {/* ── How it works ── */}
-            <section className="py-24 px-6" ref={fade1.ref}>
-                <div className={`max-w-5xl mx-auto ${fade1.className}`}>
-                    <div className="text-center mb-16">
-                        <span className="text-sm font-semibold text-blue-400 uppercase tracking-widest">How it works</span>
-                        <h2 className="text-3xl md:text-4xl font-bold mt-3 mb-4">Up and running in minutes</h2>
-                        <p className="text-slate-400 max-w-lg mx-auto">
-                            No hardware. No complicated setup. Just sign up, invite your team, and go.
-                        </p>
-                    </div>
-                    <div className="grid md:grid-cols-3 gap-8">
-                        {[
-                            { step: "01", title: "Sign up", desc: "Create your organisation and set your locations — takes under 2 minutes.", icon: Users, color: "from-blue-500 to-cyan-500" },
-                            { step: "02", title: "Add your team", desc: "Invite staff via email. They register face or PIN on their own device.", icon: Shield, color: "from-violet-500 to-purple-500" },
-                            { step: "03", title: "Clock in", desc: "Employees verify using face or PIN with optional geofencing.", icon: Clock, color: "from-pink-500 to-rose-500" },
-                        ].map(({ step, title, desc, icon: Icon, color }, i) => (
-                            <div key={step} className="group relative bg-white/[0.03] border border-white/5 rounded-2xl p-6 hover:bg-white/[0.06] hover:border-white/10 transition-all duration-300" style={{ animationDelay: `${i * 0.15}s` }}>
-                                <div className={`h-12 w-12 bg-gradient-to-br ${color} rounded-xl flex items-center justify-center mb-5 shadow-lg group-hover:scale-110 transition-transform duration-300`}>
-                                    <Icon className="h-6 w-6 text-white" />
-                                </div>
-                                <div className="text-xs font-bold text-slate-600 uppercase tracking-widest mb-2">Step {step}</div>
-                                <h3 className="text-lg font-semibold mb-2 text-white">{title}</h3>
-                                <p className="text-sm text-slate-400 leading-relaxed">{desc}</p>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            {/* ── Features grid ── */}
-            <section className="py-24 px-6 bg-gradient-to-b from-transparent via-blue-950/20 to-transparent" ref={fade2.ref}>
-                <div className={`max-w-5xl mx-auto ${fade2.className}`}>
-                    <div className="text-center mb-16">
-                        <span className="text-sm font-semibold text-violet-400 uppercase tracking-widest">Features</span>
-                        <h2 className="text-3xl md:text-4xl font-bold mt-3 mb-4">Everything you need</h2>
-                        <p className="text-slate-400 max-w-lg mx-auto">
-                            A complete attendance management platform built for UK SMBs.
-                        </p>
-                    </div>
-                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-                        {[
-                            { icon: Fingerprint, title: "Face verification", desc: "AI-powered face matching for secure, contact-free clock-in.", gradient: "from-blue-500/20 to-blue-600/5", iconColor: "text-blue-400" },
-                            { icon: Lock, title: "PIN alternative", desc: "Employees who prefer not to use biometrics can clock in with a secure PIN.", gradient: "from-violet-500/20 to-violet-600/5", iconColor: "text-violet-400" },
-                            { icon: Globe, title: "GPS geofencing", desc: "Ensure employees clock in from approved locations with GPS verification.", gradient: "from-emerald-500/20 to-emerald-600/5", iconColor: "text-emerald-400" },
-                            { icon: FileText, title: "Audit logs", desc: "Complete verification trail for every clock-in attempt — face or PIN.", gradient: "from-amber-500/20 to-amber-600/5", iconColor: "text-amber-400" },
-                            { icon: Users, title: "Multi-tenant", desc: "Each organisation gets isolated data, dashboards, and settings.", gradient: "from-pink-500/20 to-pink-600/5", iconColor: "text-pink-400" },
-                            { icon: BarChart3, title: "Reports & exports", desc: "Download attendance data as CSV. Filter by date, employee, or location.", gradient: "from-cyan-500/20 to-cyan-600/5", iconColor: "text-cyan-400" },
-                        ].map(({ icon: Icon, title, desc, gradient, iconColor }, i) => (
-                            <div key={title} className="group relative bg-white/[0.03] border border-white/5 rounded-2xl p-6 hover:bg-white/[0.06] hover:border-white/10 transition-all duration-300 hover:-translate-y-1" style={{ animationDelay: `${i * 0.1}s` }}>
-                                <div className={`h-11 w-11 bg-gradient-to-br ${gradient} rounded-xl flex items-center justify-center mb-4 border border-white/5`}>
-                                    <Icon className={`h-5 w-5 ${iconColor}`} />
-                                </div>
-                                <h3 className="font-semibold mb-1.5 text-white">{title}</h3>
-                                <p className="text-sm text-slate-400 leading-relaxed">{desc}</p>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            {/* ── Compliance ── */}
-            <section className="py-24 px-6" ref={fade3.ref}>
-                <div className={`max-w-4xl mx-auto ${fade3.className}`}>
-                    <div className="text-center mb-16">
-                        <span className="text-sm font-semibold text-green-400 uppercase tracking-widest">Compliance</span>
-                        <h2 className="text-3xl md:text-4xl font-bold mt-3 mb-4">Built for trust</h2>
-                        <p className="text-slate-400 max-w-xl mx-auto">
-                            Face biometrics are <b className="text-white">optional</b>. Every employee can choose PIN instead — because
-                            consent must be freely given.
-                        </p>
-                    </div>
-                    <div className="grid md:grid-cols-3 gap-5">
-                        {[
-                            { title: "Consent-first design", desc: "Explicit opt-in with timestamped consent records and policy versioning." },
-                            { title: "Right to delete", desc: "Employees can delete their face data at any time and switch to PIN." },
-                            { title: "Data retention controls", desc: "Admins set how long face images and logs are retained per organisation." },
-                        ].map(({ title, desc }) => (
-                            <div key={title} className="bg-white/[0.03] border border-white/5 rounded-2xl p-6 hover:bg-white/[0.06] hover:border-white/10 transition-all duration-300">
-                                <CheckCircle className="h-5 w-5 text-green-400 mb-3" />
-                                <h3 className="font-semibold mb-1.5 text-white">{title}</h3>
-                                <p className="text-sm text-slate-400 leading-relaxed">{desc}</p>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            {/* ── Testimonial ── */}
-            <section className="py-20 px-6 border-y border-white/5 bg-white/[0.02]" ref={fade4.ref}>
-                <div className={`max-w-3xl mx-auto text-center ${fade4.className}`}>
-                    <div className="flex items-center justify-center gap-1 mb-6">
-                        {[1, 2, 3, 4, 5].map(i => <Star key={i} className="h-5 w-5 text-yellow-400 fill-yellow-400" />)}
-                    </div>
-                    <blockquote className="text-xl md:text-2xl font-medium text-slate-200 leading-relaxed mb-6">
-                        "Clock-In Pro replaced our paper sign-in sheets and saved us hours every week.
-                        The face verification is incredibly fast and our staff love the simplicity."
-                    </blockquote>
-                    <p className="text-sm text-slate-500">— Operations Manager, London</p>
-                </div>
-            </section>
-
-            {/* ── CTA ── */}
-            <section className="relative py-28 px-6" ref={fade5.ref}>
-                {/* Background glow */}
-                <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                    <div className="absolute bottom-0 left-1/3 w-96 h-96 bg-blue-600/20 rounded-full blur-[120px]" />
-                    <div className="absolute bottom-10 right-1/3 w-80 h-80 bg-violet-600/15 rounded-full blur-[100px]" />
-                </div>
-                <div className={`max-w-3xl mx-auto text-center relative z-10 ${fade5.className}`}>
-                    <h2 className="text-3xl md:text-5xl font-bold mb-5">Ready to get started?</h2>
-                    <p className="text-slate-400 mb-10 text-lg">
-                        Start your 14-day free trial today. No credit card required.
-                    </p>
-                    <Link href="/signup">
-                        <Button size="lg" className="bg-gradient-to-r from-blue-500 to-violet-600 hover:from-blue-600 hover:to-violet-700 text-white px-12 py-7 text-lg rounded-2xl shadow-2xl shadow-blue-500/25 transition-all duration-300 hover:shadow-blue-500/40 hover:scale-[1.03] group">
-                            Start free trial
-                            <ArrowRight className="h-5 w-5 ml-2 transition-transform group-hover:translate-x-1" />
-                        </Button>
-                    </Link>
-                </div>
-            </section>
-
-            {/* ── Footer ── */}
-            <footer className="py-12 px-6 border-t border-white/5 bg-[#06060a]">
-                <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
-                    <div className="flex items-center gap-2.5">
-                        <div className="h-8 w-8 bg-gradient-to-br from-blue-500 to-violet-600 rounded-lg flex items-center justify-center">
-                            <Clock className="h-4 w-4 text-white" />
-                        </div>
-                        <span className="font-semibold text-white">Clock-In Pro</span>
-                    </div>
-                    <div className="flex gap-6 text-sm text-slate-500">
-                        <Link href="/pricing" className="hover:text-white transition-colors duration-200">Pricing</Link>
-                        <Link href="/security" className="hover:text-white transition-colors duration-200">Security</Link>
-                        <Link href="/privacy" className="hover:text-white transition-colors duration-200">Privacy</Link>
-                        <Link href="/terms" className="hover:text-white transition-colors duration-200">Terms</Link>
-                    </div>
-                    <p className="text-sm text-slate-600">© {new Date().getFullYear()} Clock-In Pro</p>
-                </div>
-            </footer>
+  return (
+    <MarketingLayout>
+      {/* Hero */}
+      <section className="glow-bg relative overflow-hidden px-4 pb-20 pt-16 sm:px-6 sm:pt-24">
+        <div className="mx-auto grid max-w-6xl items-center gap-12 lg:grid-cols-2">
+          <div className="animate-fade-up">
+            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-muted-foreground">
+              <BadgeCheck className="h-3.5 w-3.5 text-primary" /> First month free · cancel anytime
+            </span>
+            <h1 className="mt-5 text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
+              Clock-in that <span className="brand-gradient-text">can't be faked.</span>
+            </h1>
+            <p className="mt-5 max-w-xl text-lg text-muted-foreground">
+              Face-verified, geofenced attendance for teams with hourly staff. Rotas, lateness and payroll-ready
+              timesheets, from £3 per employee a month. Admin seats are free.
+            </p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <Button size="lg" asChild className="brand-gradient h-12 px-6 text-base text-white shadow-glow hover:opacity-95">
+                <Link href="/signup">
+                  Start your free month <ArrowRight className="h-5 w-5" />
+                </Link>
+              </Button>
+              <Button size="lg" variant="outline" asChild className="h-12 px-6 text-base">
+                <Link href="/pricing">See pricing</Link>
+              </Button>
+            </div>
+            <ul className="mt-8 grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+              {["Set up in minutes, no hardware", "Works on any phone or laptop", "GDPR consent built in", "Cancel before day 31, pay nothing"].map((t) => (
+                <li key={t} className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-success" /> {t}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="animate-fade-up lg:justify-self-end" style={{ animationDelay: "120ms" }}>
+            <PreviewCard />
+          </div>
         </div>
-    );
+      </section>
+
+      {/* Proof strip */}
+      <section className="border-y border-border/60 bg-muted/30 px-4 py-8 sm:px-6">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-x-10 gap-y-4 text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">Built for</span>
+          {["Cafés & restaurants", "Retail", "Care homes", "Warehouses", "Salons", "Cleaning teams"].map((t) => (
+            <span key={t}>{t}</span>
+          ))}
+        </div>
+      </section>
+
+      {/* How it works */}
+      <section className="px-4 py-20 sm:px-6" id="how-it-works">
+        <div className="mx-auto max-w-6xl">
+          <div className="mx-auto max-w-2xl text-center">
+            <span className="text-sm font-semibold uppercase tracking-widest text-primary">How it works</span>
+            <h2 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">Up and running before lunch</h2>
+          </div>
+          <div className="mt-12 grid gap-6 md:grid-cols-3">
+            {steps.map((s, i) => (
+              <div key={s.title} className="surface p-6">
+                <div className="brand-gradient flex h-9 w-9 items-center justify-center rounded-xl text-sm font-bold text-white">{i + 1}</div>
+                <h3 className="mt-4 text-lg font-semibold">{s.title}</h3>
+                <p className="mt-2 text-sm text-muted-foreground">{s.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Features */}
+      <section className="bg-muted/30 px-4 py-20 sm:px-6" id="features">
+        <div className="mx-auto max-w-6xl">
+          <div className="mx-auto max-w-2xl text-center">
+            <span className="text-sm font-semibold uppercase tracking-widest text-primary">Features</span>
+            <h2 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">Everything an hourly team needs</h2>
+            <p className="mt-4 text-muted-foreground">No kiosks, no fobs, no spreadsheets.</p>
+          </div>
+          <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {features.map((f) => (
+              <div key={f.title} className="surface group p-6 transition-colors hover:border-primary/40">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <f.icon className="h-5 w-5" />
+                </div>
+                <h3 className="mt-4 font-semibold">{f.title}</h3>
+                <p className="mt-2 text-sm text-muted-foreground">{f.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Pricing teaser */}
+      <section className="px-4 py-20 sm:px-6">
+        <div className="mx-auto grid max-w-6xl items-center gap-10 lg:grid-cols-2">
+          <div>
+            <span className="text-sm font-semibold uppercase tracking-widest text-primary">Pricing</span>
+            <h2 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">One price per employee. That's it.</h2>
+            <p className="mt-4 text-muted-foreground">
+              Your first month is free. After that you pay only for active employees. Admin accounts never count. Add
+              or remove staff any time and your bill adjusts automatically.
+            </p>
+            <ul className="mt-6 space-y-3 text-sm">
+              {["Unlimited sites and shifts", "Face and PIN clock-in", "Rotas, lateness and timesheets", "Branded employee portal", "Email support"].map((t) => (
+                <li key={t} className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-success" /> {t}
+                </li>
+              ))}
+            </ul>
+            <Button asChild className="mt-8" variant="outline">
+              <Link href="/pricing">
+                Full pricing and calculator <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="surface p-6">
+              <p className="text-sm font-medium text-muted-foreground">Monthly</p>
+              <p className="mt-2 text-4xl font-extrabold">£3.50</p>
+              <p className="text-sm font-medium text-muted-foreground">per employee per month</p>
+              <p className="mt-2 text-sm text-muted-foreground">First month free, then billed monthly.</p>
+            </div>
+            <div className="relative rounded-2xl border border-primary/40 bg-primary/5 p-6">
+              <span className="absolute -top-3 right-4 rounded-full bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground">Save 14%</span>
+              <p className="text-sm font-medium text-primary">Annual</p>
+              <p className="mt-2 text-4xl font-extrabold">£3.00</p>
+              <p className="text-sm font-medium text-muted-foreground">per employee per month</p>
+              <p className="mt-2 text-sm text-muted-foreground">First month free, then billed yearly.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Trust */}
+      <section className="border-y border-border/60 bg-muted/30 px-4 py-16 sm:px-6">
+        <div className="mx-auto grid max-w-6xl gap-6 md:grid-cols-3">
+          {[
+            { icon: ShieldCheck, title: "Encrypted everywhere", body: "TLS in transit, encrypted at rest, sessions in secure HTTP-only cookies." },
+            { icon: Fingerprint, title: "Biometrics you control", body: "Explicit consent is recorded. Staff can switch to PIN or delete their face data whenever they like." },
+            { icon: Users, title: "Strict tenant isolation", body: "Every query is scoped to your organisation. Nobody else can see your people or their data." },
+          ].map((t) => (
+            <div key={t.title} className="flex gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <t.icon className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-semibold">{t.title}</h3>
+                <p className="mt-1 text-sm text-muted-foreground">{t.body}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-8 text-center">
+          <Link href="/security" className="text-sm font-medium text-primary hover:underline">
+            Read how we protect your data →
+          </Link>
+        </div>
+      </section>
+
+      {/* CTA */}
+      <section className="glow-bg px-4 py-24 text-center sm:px-6">
+        <div className="mx-auto max-w-2xl">
+          <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <Clock className="h-7 w-7" />
+          </div>
+          <h2 className="text-3xl font-bold tracking-tight sm:text-5xl">Stop paying for hours nobody worked.</h2>
+          <p className="mt-4 text-lg text-muted-foreground">Your first month is on us. Set up takes less time than your next shift handover.</p>
+          <Button size="lg" asChild className="brand-gradient mt-8 h-12 px-8 text-base text-white shadow-glow hover:opacity-95">
+            <Link href="/signup">
+              Start your free month <ArrowRight className="h-5 w-5" />
+            </Link>
+          </Button>
+        </div>
+      </section>
+    </MarketingLayout>
+  );
 }
