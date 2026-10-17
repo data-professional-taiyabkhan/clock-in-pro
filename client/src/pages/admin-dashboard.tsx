@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Clock, CreditCard, LayoutDashboard, Mail, MapPinned, Settings, Users } from "lucide-react";
+import { Building2, Clock, CreditCard, LayoutDashboard, Mail, MapPinned, Palette, Settings, Users } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AppShell, PageTitle } from "@/components/layout/app-shell";
 import { ChangePasswordDialog } from "@/components/change-password-dialog";
@@ -14,6 +14,7 @@ import { AttendanceTab } from "@/features/admin/attendance-tab";
 import { InvitationsTab } from "@/features/admin/invitations-tab";
 import { SettingsTab } from "@/features/admin/settings-tab";
 import { BillingBanner, BillingTab } from "@/features/admin/billing-tab";
+import { BrandingTab } from "@/features/admin/branding-tab";
 import { useOrganization } from "@/features/admin/use-admin-data";
 
 const tabs = [
@@ -23,6 +24,7 @@ const tabs = [
   { value: "locations", label: "Locations", icon: Building2 },
   { value: "assignments", label: "Sites", icon: MapPinned },
   { value: "invitations", label: "Invitations", icon: Mail },
+  { value: "branding", label: "Branding", icon: Palette },
   { value: "billing", label: "Billing", icon: CreditCard },
   { value: "settings", label: "Settings", icon: Settings },
 ];
@@ -81,6 +83,9 @@ export default function AdminDashboard() {
         </TabsContent>
         <TabsContent value="invitations">
           <InvitationsTab />
+        </TabsContent>
+        <TabsContent value="branding">
+          <BrandingTab />
         </TabsContent>
         <TabsContent value="billing">
           <BillingTab />

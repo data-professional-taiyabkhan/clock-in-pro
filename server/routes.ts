@@ -2,8 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { setupAuth, requireAuth, requireAdmin, hashPassword, comparePasswords } from "./auth";
 import { storage } from "./storage";
-import { insertAttendanceRecordSchema, insertLocationSchema, loginSchema, registerSchema, insertOrganizationSchema, setupPinSchema, verifyPinSchema, signupSchema, users, employeeInvitations, locations, employeeLocations } from "@shared/schema";
-import type { User } from "@shared/schema";
+import { insertAttendanceRecordSchema, insertLocationSchema, loginSchema, registerSchema, insertOrganizationSchema, setupPinSchema, verifyPinSchema, signupSchema, organizationBrandingSchema, organizationSettingsSchema, users, employeeInvitations, locations, employeeLocations } from "@shared/schema";
+import type { User, Organization } from "@shared/schema";
 import { z } from "zod";
 import { desc, eq, and } from "drizzle-orm";
 import { db } from "./db";
@@ -29,6 +29,21 @@ import {
 } from "./lib/face-descriptor";
 
 const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i;
+
+/** Public, non-sensitive organisation fields (safe for the unauthenticated login page). */
+function publicOrg(org: Organization) {
+  return {
+    id: org.id,
+    name: org.name,
+    slug: org.slug,
+    logoUrl: org.logoUrl ?? null,
+    brandColor: org.brandColor ?? null,
+    wallpaperUrl: org.wallpaperUrl ?? null,
+    wallpaperPreset: org.wallpaperPreset ?? null,
+    welcomeTitle: org.welcomeTitle ?? null,
+    welcomeMessage: org.welcomeMessage ?? null,
+  };
+}
 
 function toSafeUser(user: User) {
   const { password: _password, faceEmbedding: _faceEmbedding, pinHash: _pinHash, ...rest } = user;
@@ -167,12 +182,12 @@ export function registerRoutes(app: Express): Server {
     });
   });
 
-  // ── Public: look up organisation by slug (for employee login page) ──
+  // ── Public: organisation branding for the employee login page ──
   app.get("/api/org/:slug", async (req, res) => {
     try {
       const org = await storage.getOrganizationBySlug(req.params.slug);
-      if (!org) return res.status(404).json({ message: "Organisation not found" });
-      res.json({ id: org.id, name: org.name, slug: org.slug });
+      if (!org || org.isActive === false) return res.status(404).json({ message: "Organisation not found" });
+      res.json(publicOrg(org));
     } catch {
       res.status(500).json({ message: "Server error" });
     }
@@ -263,9 +278,46 @@ export function registerRoutes(app: Express): Server {
       if (!req.user!.organizationId!) return res.status(404).json({ message: "No organisation" });
       const org = await storage.getOrganization(req.user!.organizationId!);
       if (!org) return res.status(404).json({ message: "Organisation not found" });
-      res.json({ id: org.id, name: org.name, slug: org.slug });
+      res.json({ ...publicOrg(org), latenessGraceMinutes: org.latenessGraceMinutes ?? 5, timezone: org.timezone ?? "Europe/London", trialEndsAt: org.trialEndsAt });
     } catch {
       res.status(500).json({ message: "Server error" });
+    }
+  });
+
+  // ── Admin: update branding of the employee login page ──
+  app.put("/api/organization/branding", requireAdmin, async (req, res) => {
+    try {
+      const data = organizationBrandingSchema.parse(req.body ?? {});
+      const updates: Record<string, unknown> = {};
+      for (const key of ["logoUrl", "brandColor", "wallpaperUrl", "wallpaperPreset", "welcomeTitle", "welcomeMessage"] as const) {
+        if (key in data) updates[key] = data[key] === "" ? null : data[key];
+      }
+      // A custom wallpaper replaces a preset and vice versa
+      if (updates.wallpaperUrl) updates.wallpaperPreset = null;
+      if (updates.wallpaperPreset) updates.wallpaperUrl = null;
+      const org = await storage.updateOrganization(req.user!.organizationId!, updates);
+      res.json(publicOrg(org));
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: error.errors[0]?.message || "Invalid branding", errors: error.errors });
+      }
+      console.error("Branding update error:", error);
+      res.status(500).json({ message: "Failed to update branding" });
+    }
+  });
+
+  // ── Admin: organisation settings (name, lateness grace, timezone) ──
+  app.put("/api/organization/settings", requireAdmin, async (req, res) => {
+    try {
+      const data = organizationSettingsSchema.parse(req.body ?? {});
+      const org = await storage.updateOrganization(req.user!.organizationId!, data);
+      res.json({ ...publicOrg(org), latenessGraceMinutes: org.latenessGraceMinutes ?? 5, timezone: org.timezone ?? "Europe/London" });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: error.errors[0]?.message || "Invalid settings", errors: error.errors });
+      }
+      console.error("Settings update error:", error);
+      res.status(500).json({ message: "Failed to update settings" });
     }
   });
 
@@ -2063,7 +2115,7 @@ export function registerRoutes(app: Express): Server {
       res.json({
         email: invitation.email,
         role: invitation.role ?? "employee",
-        organisation: org ? { name: org.name, slug: org.slug, logoUrl: (org as any).logoUrl ?? null, brandColor: (org as any).brandColor ?? null } : null,
+        organisation: org ? publicOrg(org) : null,
         invitedBy: inviter ? `${inviter.firstName} ${inviter.lastName}` : null,
         expired: new Date() > new Date(invitation.expiresAt),
         used: !!invitation.used,
